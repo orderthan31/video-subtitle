@@ -47,6 +47,8 @@ class Worker:
             return self.repository.update_status(job_id, status, metadata=metadata, **kwargs)
 
     def cleanup(self, job_id, keep_output=False):
+        if self.repository.preserve_artifacts:
+            return
         root = self.repository.storage_root
         errors = []
         for name in (["input", "work"] if keep_output else ["input", "work", "output"]):
@@ -242,6 +244,10 @@ class Worker:
             try:
                 with job_lock(self.repository, record.job_id, "execution"), job_lock(self.repository, record.job_id):
                     record = self.repository.read(record.job_id)
+                    if self.repository.preserve_artifacts and record.status in (
+                        *TERMINAL_STATUSES, JobStatus.UPLOADING, JobStatus.AWAITING_REVIEW,
+                    ):
+                        continue
                     age = (now - datetime.fromisoformat(record.completed_at or record.updated_at)).total_seconds()
                     if record.status in TERMINAL_STATUSES:
                         if age > history_ttl:

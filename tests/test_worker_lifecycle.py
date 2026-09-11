@@ -41,6 +41,44 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertIn("encoder unavailable", self.repo.read(self.job).error)
         self.assertEqual({p.name for p in self.repo.job_dir(self.job).iterdir()}, {"job.json"})
 
+    def test_development_preservation_keeps_failure_and_all_cleanup_outputs(self):
+        (self.root / ".preserve-artifacts").touch()
+        work = self.repo.job_dir(self.job) / "work"
+        output = self.repo.job_dir(self.job) / "output"
+        work.mkdir(exist_ok=True)
+        output.mkdir(exist_ok=True)
+        (work / "audio.wav").write_bytes(b"audio")
+        (output / "translated.srt").write_text("subtitle")
+        self.repo.update_status(self.job, JobStatus.QUEUED)
+        with patch("media_worker.worker.select_encoder", side_effect=RuntimeError("failure")):
+            self.worker.process(self.job)
+        self.assertEqual(self.repo.read(self.job).status, JobStatus.FAILED)
+        for keep in (False, True):
+            self.worker.cleanup(self.job, keep_output=keep)
+            self.assertTrue(self.repo.source_path(self.record).exists())
+            self.assertEqual((work / "audio.wav").read_bytes(), b"audio")
+            self.assertEqual((output / "translated.srt").read_text(), "subtitle")
+        with self.assertRaises(PermissionError):
+            self.repo.delete_job_dir(self.job)
+
+    def test_development_preservation_skips_ttl_and_orphans(self):
+        (self.root / ".preserve-artifacts").touch()
+        orphan = self.root / uuid4().hex
+        orphan.mkdir()
+        (orphan / "source.mp4").write_bytes(b"orphan")
+        with patch.dict("os.environ", {"RESULT_TTL_HOURS": "0", "HISTORY_TTL_DAYS": "0",
+                "UPLOAD_TTL_HOURS": "0", "REVIEW_TTL_HOURS": "0"}):
+            for status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED,
+                    JobStatus.UPLOADING, JobStatus.AWAITING_REVIEW):
+                self.repo.update_status(self.job, status)
+                self.worker.collect()
+                self.assertEqual(self.repo.read(self.job).status, status)
+                self.assertTrue(self.repo.source_path(self.record).exists())
+                self.assertNotIn("results_expired_at", self.repo.read(self.job).metadata)
+        from media_worker.cleanup import collect_orphans
+        self.assertEqual(collect_orphans(self.repo, now=10**12), [])
+        self.assertTrue((orphan / "source.mp4").exists())
+
     def test_pcm_capacity_failure_stops_before_extraction(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
         metadata = {"duration": 3600, "streams": [

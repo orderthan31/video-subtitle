@@ -9,6 +9,8 @@ from video_service.storage import read_json
 
 def collect_orphans(repository, *, grace_seconds=7200, now=None):
     """Collect only stale UUID directories lacking usable metadata, under both job locks."""
+    if repository.preserve_artifacts:
+        return []
     if grace_seconds < 60:
         raise ValueError("Orphan grace period must be at least 60 seconds")
     now = time.time() if now is None else now
