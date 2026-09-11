@@ -43,6 +43,34 @@ class HistoryTests(unittest.TestCase):
         self.repo.save(record)
         return record.completed_at
 
+    def test_list_order_stays_fixed_during_upload_and_transcription_updates(self):
+        transcribing = self.repo.read(self.job_id)
+        transcribing.created_at = "2026-09-11T00:00:00+00:00"
+        self.repo.save(transcribing)
+        self.repo.update_status(self.job_id, JobStatus.TRANSCRIBING)
+        uploading = self.repo.create_job(original_filename="upload.mp4", expected_size=3,
+            source_language="en", target_language="ko", quality_profile=QualityProfile.BALANCED)
+        uploading.created_at = "2026-09-11T00:01:00+00:00"
+        self.repo.save(uploading)
+        expected = [uploading.job_id, self.job_id]
+        for progress in (1, 2, 3):
+            self.repo.update_upload_progress(uploading.job_id, progress)
+            self.repo.heartbeat(self.job_id)
+            self.assertEqual([job["job_id"] for job in self.client.get("/api/jobs").json()["jobs"]], expected)
+        self.repo.update_status(self.job_id, JobStatus.COMPLETED)
+        with patch.object(routes, "repository", FilesystemJobRepository(self.root)):
+            self.assertEqual([job["job_id"] for job in self.client.get("/api/jobs").json()["jobs"]], expected)
+
+    def test_equal_creation_times_have_stable_id_tiebreaker(self):
+        other = self.repo.create_job(original_filename="other.mp4", expected_size=3,
+            source_language="en", target_language="ko", quality_profile=QualityProfile.BALANCED)
+        other.created_at = self.repo.read(self.job_id).created_at
+        self.repo.save(other)
+        expected = sorted([self.job_id, other.job_id], reverse=True)
+        for job_id in (self.job_id, other.job_id):
+            self.repo.heartbeat(job_id)
+            self.assertEqual([job["job_id"] for job in self.client.get("/api/jobs").json()["jobs"]], expected)
+
     def test_expired_media_keeps_readable_history_and_returns_gone(self):
         completed_at = self.age(2)
         self.worker.collect()
