@@ -54,7 +54,7 @@ class GeminiProvider:
                 if not candidates or candidates[0].get("finishReason") != "STOP":
                     raise ValueError("Gemini returned incomplete or blocked output")
                 if transcription_config is not None:
-                    return parse_word_transcriptions(candidates[0]["content"]["parts"])
+                    return parse_word_transcriptions(candidates[0]["content"]["parts"], group=False)
                 text = "".join(part.get("text", "") for part in candidates[0]["content"]["parts"])
                 return json.loads(text)
 
@@ -63,6 +63,8 @@ class GeminiProvider:
 
     def transcribe(self, source, language, check, *, spans=None):
         result = []
+        region_words = []
+        current_region = None
         with wave.open(str(source), "rb") as audio:
             rate = audio.getframerate()
             total = audio.getnframes()
@@ -70,6 +72,10 @@ class GeminiProvider:
             regions = identity_timeline(total / rate) if spans is None else spans
             for first, left, right, span in transcription_windows(total, rate, regions):
                 check()
+                if span != current_region:
+                    result.extend(TranscriptSegment.from_dict(item) for item in group_transcription_words(region_words))
+                    region_words = []
+                    current_region = span
                 audio.setpos(left)
                 buffer = io.BytesIO()
                 with wave.open(buffer, "wb") as chunk:
@@ -91,7 +97,8 @@ class GeminiProvider:
                     middle = (start + end) / 2
                     owner_start = span.processed_start + (first - region_first) / rate
                     if start < end and owner_start <= middle < min(span.processed_end, owner_start + 60):
-                        result.append(segment.with_times(start, end))
+                        region_words.append(segment.with_times(start, end).to_dict())
+        result.extend(TranscriptSegment.from_dict(item) for item in group_transcription_words(region_words))
         return sorted(result, key=lambda segment: segment.start)
 
     def translate(self, segments, language, check):
@@ -129,9 +136,8 @@ def transcription_windows(total, rate, spans):
             yield first, max(start, first - rate), min(end, first + rate * 61), span
 
 
-def parse_word_transcriptions(parts):
-    segments = []
-    current = None
+def parse_word_transcriptions(parts, *, group=True):
+    words = []
     for part in parts:
         annotation = part.get("audioTranscription", {})
         speaker = annotation.get("speakerLabel")
@@ -143,19 +149,29 @@ def parse_word_transcriptions(parts):
                 raise ValueError("Invalid word timestamps")
             if not text:
                 continue
-            if current and (start - current["end"] > 0.8 or end - current["start"] > 5 or speaker != current.get("speaker")):
-                segments.append(current)
-                current = None
-            if current is None:
-                current = {"start": start, "end": end, "text": text, "speaker": speaker}
-            else:
-                current["end"] = end
-                current["text"] += " " + text
-            if text.endswith((".", "?", "!", "。", "！", "？")):
-                segments.append(current)
-                current = None
+            words.append({"start": start, "end": end, "text": text, "speaker": speaker})
+    if not words and any(part.get("text", "").strip() for part in parts):
+        raise ValueError("Transcription returned text without word timestamps")
+    return group_transcription_words(words) if group else words
+
+
+def group_transcription_words(words):
+    """Build utterances only after word-level overlap ownership has been resolved."""
+    segments = []
+    current = None
+    for word in sorted(words, key=lambda item: (item["start"], item["end"])):
+        start, end, text, speaker = word["start"], word["end"], word["text"], word.get("speaker")
+        if current and (start - current["end"] > 0.8 or end - current["start"] > 5 or speaker != current.get("speaker")):
+            segments.append(current)
+            current = None
+        if current is None:
+            current = {"start": start, "end": end, "text": text, "speaker": speaker}
+        else:
+            current["end"] = max(current["end"], end)
+            current["text"] += " " + text
+        if text.endswith((".", "?", "!", "。", "！", "？")):
+            segments.append(current)
+            current = None
     if current:
         segments.append(current)
-    if not segments and any(part.get("text", "").strip() for part in parts):
-        raise ValueError("Transcription returned text without word timestamps")
     return segments

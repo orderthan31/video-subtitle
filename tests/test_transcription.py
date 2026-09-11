@@ -6,7 +6,9 @@ import io
 import shutil
 import uuid
 import wave
-from unittest.mock import Mock
+import asyncio
+import httpx
+from unittest.mock import Mock, AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
@@ -77,6 +79,50 @@ class TranscriptionTests(unittest.TestCase):
 
     def test_empty_audio_has_no_requests(self):
         self.assertEqual(list(transcription_windows(0, 100, [])), [])
+
+    def test_native_response_keeps_words_until_chunk_ownership(self):
+        provider = GeminiProvider.__new__(GeminiProvider)
+        provider.key = "test-only"
+        parts = [{"audioTranscription": {"words": [
+            {"word": "Hello", "startOffset": "0.1s", "endOffset": "0.3s"},
+            {"word": "world.", "startOffset": "0.4s", "endOffset": "0.9s"}]}}]
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.return_value = httpx.Response(200, json={"candidates": [{
+            "finishReason": "STOP", "content": {"parts": parts}}]})
+        with patch("media_worker.providers.httpx.AsyncClient", return_value=client):
+            words = asyncio.run(provider._request([], None, lambda: None, "test-model", {"wordTimestamp": True}))
+        self.assertEqual([word["text"] for word in words], ["Hello", "world."])
+
+    def test_sentence_crossing_sixty_seconds_keeps_each_word_once(self):
+        folder = ROOT / "data/test-runs" / uuid.uuid4().hex
+        folder.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, folder)
+        source = folder / "audio.wav"
+        with wave.open(str(source), "wb") as audio:
+            audio.setparams((1, 2, 100, 0, "NONE", "not compressed"))
+            audio.writeframes(bytes(63 * 100 * 2))
+        provider = GeminiProvider.__new__(GeminiProvider)
+        provider.transcription_model = "test-model"
+        # The second request starts at 59s and repeats context from the first.
+        first = [{"start": 58.8, "end": 59.2, "text": "We"},
+            {"start": 59.4, "end": 59.8, "text": "keep"},
+            {"start": 60.1, "end": 60.4, "text": "every"},
+            {"start": 60.6, "end": 60.9, "text": "word."}]
+        second = [{**word, "start": word["start"] - 59, "end": word["end"] - 59} for word in first[1:]]
+        provider.request = Mock(side_effect=[first, second])
+        result = provider.transcribe(source, "en", lambda: None)
+        self.assertEqual(provider.request.call_count, 2)
+        self.assertEqual([segment.text for segment in result], ["We keep every word."])
+        self.assertAlmostEqual(result[0].start, 58.8)
+        self.assertAlmostEqual(result[0].end, 60.9)
+
+    def test_raw_words_keep_intentional_repetition(self):
+        parts = [{"audioTranscription": {"words": [
+            {"word": "very", "startOffset": "0s", "endOffset": "0.3s"},
+            {"word": "very", "startOffset": "0.4s", "endOffset": "0.7s"},
+            {"word": "good.", "startOffset": "0.8s", "endOffset": "1s"}]}}]
+        self.assertEqual(parse_word_transcriptions(parts)[0]["text"], "very very good.")
 
 
 if __name__ == "__main__":
