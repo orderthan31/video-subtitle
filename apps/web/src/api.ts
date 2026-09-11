@@ -1,3 +1,5 @@
+import {blockSize, verifyUploadedPrefix} from './upload-verification';
+
 export const base = import.meta.env.VITE_API_BASE_URL || '/api';
 export type Job = {
   job_id: string; status: string; original_filename: string; expected_size: number; uploaded_bytes: number;
@@ -20,12 +22,16 @@ export async function resumeUpload(file: File, id: string, signal: AbortSignal, 
   let retries = 0;
   while (!signal.aborted) {
     try {
-      const state = await request<{uploaded_bytes: number; resumable: boolean}>(`/uploads/${id}`, {signal});
+      const state = await request<{uploaded_bytes: number; expected_size: number; resumable: boolean}>(`/uploads/${id}`, {signal});
       if (!state.resumable) return;
+      if (state.expected_size !== file.size) throw new ApiError(400, '원본 파일과 크기가 일치해야 합니다.');
       let offset = state.uploaded_bytes;
       progress(offset);
+      await verifyUploadedPrefix(file, offset, signal, block => request<void>(`/uploads/${id}/verify`, {
+        method: 'POST', signal, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(block),
+      }));
       while (offset < file.size) {
-        const chunk = file.slice(offset, offset + 4 * 1024 * 1024);
+        const chunk = file.slice(offset, offset + blockSize);
         const next = await request<{uploaded_bytes: number}>(`/uploads/${id}/chunks?offset=${offset}`, {
           method: 'PUT', body: chunk, signal, headers: {'Content-Type': 'application/octet-stream'},
         });
@@ -39,6 +45,7 @@ export async function resumeUpload(file: File, id: string, signal: AbortSignal, 
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof ApiError && error.status !== 409 && error.status < 500) throw error;
+      if (!(error instanceof ApiError) && !(error instanceof TypeError)) throw error;
       if (++retries > 4) throw error;
       await new Promise<void>(resolve => {
         const timer = setTimeout(done, retries * 500);

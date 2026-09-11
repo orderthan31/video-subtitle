@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from functools import partial
+import hashlib
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
@@ -13,6 +14,7 @@ from app.schemas.jobs import (
     UploadCreateRequest,
     UploadCreateResponse,
     UploadStatusResponse,
+    UploadVerifyRequest,
     job_to_response,
 )
 from app.services.storage_guard import StorageGuard, StorageLimitError
@@ -85,6 +87,24 @@ def get_upload_status(job_id: str) -> UploadStatusResponse:
         expected_size=record.expected_size,
         resumable=record.status == JobStatus.UPLOADING,
     )
+
+
+@router.post("/uploads/{job_id}/verify", status_code=status.HTTP_204_NO_CONTENT)
+def verify_upload_block(job_id: str, payload: UploadVerifyRequest) -> None:
+    with job_lock(repository, job_id):
+        record = _read_job_or_404(job_id)
+        source = repository.source_path(record)
+        if record.status != JobStatus.UPLOADING or not source.exists():
+            raise HTTPException(status_code=409, detail="업로드 상태가 변경되었습니다.")
+        if source.stat().st_size != payload.uploaded_bytes:
+            raise HTTPException(status_code=409, detail="업로드 크기가 변경되었습니다.")
+        if payload.offset + payload.length > payload.uploaded_bytes:
+            raise HTTPException(status_code=400, detail="검증 범위가 업로드 크기를 초과합니다.")
+        with source.open("rb") as stream:
+            stream.seek(payload.offset)
+            digest = hashlib.sha256(stream.read(payload.length)).hexdigest()
+        if digest != payload.sha256:
+            raise HTTPException(status_code=422, detail="저장된 영상과 파일 내용이 다릅니다. 원본 파일을 다시 선택하세요.")
 
 
 @router.put("/uploads/{job_id}/chunks", response_model=ChunkUploadResponse)

@@ -36,6 +36,13 @@ class ChunkUploadResponse(BaseModel):
     expected_size: int
 
 
+class UploadVerifyRequest(BaseModel):
+    uploaded_bytes: int = Field(gt=0)
+    offset: int = Field(ge=0)
+    length: int = Field(gt=0, le=4 * 1024 * 1024)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class JobResponse(BaseModel):
     job_id: str
     status: JobStatus
@@ -74,4 +81,3 @@ def job_to_response(record: JobRecord) -> JobResponse:
         updated_at=record.updated_at,
         completed_at=record.completed_at,
     )
-

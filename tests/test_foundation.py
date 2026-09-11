@@ -3,6 +3,7 @@ import sys
 import shutil
 from uuid import uuid4
 import unittest
+import hashlib
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +102,32 @@ class FoundationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.delete(f"/api/jobs/{job_id}").status_code, 204)
             self.assertEqual(client.get(f"/api/jobs/{job_id}").status_code, 404)
             self.assertEqual(client.post("/api/jobs/invalid/cancel").status_code, 404)
+
+    def test_api_resume_content_verification(self):
+        from fastapi.testclient import TestClient
+        from app.api import routes
+        from app.main import app
+        with patch.object(routes, "repository", self.repo), patch.object(routes, "upload_service", self.upload):
+            client = TestClient(app)
+            url = f"/api/uploads/{self.job.job_id}"
+            client.put(url + "/chunks?offset=0", content=b"abc")
+            payload = {"uploaded_bytes": 3, "offset": 0, "length": 3,
+                "sha256": hashlib.sha256(b"abc").hexdigest()}
+            self.assertEqual(client.post(url + "/verify", json=payload).status_code, 204)
+            bad = {**payload, "sha256": hashlib.sha256(b"xyz").hexdigest()}
+            self.assertEqual(client.post(url + "/verify", json=bad).status_code, 422)
+            self.assertEqual(client.post(url + "/verify", json={**payload, "length": 4}).status_code, 400)
+            self.assertEqual(client.post(url + "/verify", json={**payload, "length": 4*1024**2+1}).status_code, 422)
+            self.assertEqual(client.post(url + "/verify", json={**payload, "offset": -1}).status_code, 422)
+            self.assertEqual(client.post(url + "/verify", json={**payload, "uploaded_bytes": 2}).status_code, 409)
+            with job_lock(self.repo, self.job.job_id):
+                self.assertEqual(client.post(url + "/verify", json=payload).status_code, 409)
+            self.assertEqual(self.repo.source_path(self.job).read_bytes(), b"abc")
+            self.assertEqual(self.repo.read(self.job.job_id).status, JobStatus.UPLOADING)
+            client.put(url + "/chunks?offset=3", content=b"def")
+            self.assertEqual(client.post(url + "/verify", json=payload).status_code, 409)
+            client.post(url + "/complete")
+            self.assertEqual(client.post(url + "/verify", json={**payload, "uploaded_bytes": 6}).status_code, 409)
 
 
 if __name__ == "__main__":
