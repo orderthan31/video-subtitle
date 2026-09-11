@@ -4,6 +4,9 @@
 
 ## 구현 및 검증
 
+- 단계별 로컬 Git 커밋 시작: API 기반, Worker, Web을 분리 기록.
+- 실제 Gemini 번역 한 문장과 합성 영어 음성 전사 성공. 전사는 `audioTranscriptionConfig.wordTimestamp`로 받은 단어 시간을 문장 단위로 묶는다. 실제 영상 품질/E2E 검증과는 구분한다.
+
 - API 업로드/재개/취소/삭제 및 저장소 보호 회귀 테스트 10개 통과.
 - 미디어 프로세스 실행기, 긴 무음 구간 계산, PCM 구간 복사, 시간 매핑, 인코딩 명령 테스트 7개 통과.
 
@@ -34,5 +37,6 @@
 - [FFmpeg 필터](https://ffmpeg.org/ffmpeg-filters.html)
 - [Gemini 오디오](https://ai.google.dev/gemini-api/docs/audio)
 - [Gemini generateContent API](https://ai.google.dev/api/generate-content)
+- [전사 전용 설정과 응답](https://ai.google.dev/gemini-api/docs/generate-content/transcribe)
 
-현재 테스트는 실제 FFmpeg 실행이나 유료 Gemini 호출 성공을 증명하지 않는다.
+자동 회귀 테스트와 별도로 소규모 실제 Gemini 호출을 확인했다. 실제 FFmpeg 실행과 대용량 E2E는 아직 검증하지 않았다.
