@@ -4,10 +4,11 @@ from functools import partial
 import hashlib
 import errno
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 
 from app.core.config import settings
+from app.api.auth_routes import require_session
 from app.schemas.jobs import (
     ChunkUploadResponse,
     JobListResponse,
@@ -27,7 +28,19 @@ from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.capacity import assert_capacity
 from video_service.review import read_draft, write_draft
 
-router = APIRouter(prefix="/api")
+def authorize_job_request(request: Request):
+    if request.scope.get("route").path == "/api/health":
+        return
+    session = require_session(request) if request.app.state.auth.store is not None else None
+    request.state.owner_id = session["user"]["id"] if session else None
+    job_id = request.path_params.get("job_id")
+    if job_id is not None:
+        record = _read_job_or_404(job_id)
+        if record.metadata.get("owner_id") != request.state.owner_id:
+            raise HTTPException(status_code=404, detail="Job을 찾을 수 없습니다.")
+
+
+router = APIRouter(prefix="/api", dependencies=[Depends(authorize_job_request)])
 repository = FilesystemJobRepository(settings.storage_root)
 upload_service = UploadService(repository, partial(assert_capacity, settings.storage_root,
     settings.service_quota_bytes, settings.min_free_space_bytes))
@@ -52,12 +65,13 @@ def health() -> dict[str, str]:
 
 
 @router.post("/uploads", response_model=UploadCreateResponse, status_code=status.HTTP_201_CREATED)
-def create_upload(payload: UploadCreateRequest) -> UploadCreateResponse:
+def create_upload(payload: UploadCreateRequest, request: Request) -> UploadCreateResponse:
     try:
         with job_lock(repository, "0" * 32):
             request_id = str(payload.request_id) if payload.request_id else None
             record = next((job for job in repository.list()
-                if job.metadata.get("upload_request_id") == request_id), None) if request_id else None
+                if job.metadata.get("upload_request_id") == request_id
+                and job.metadata.get("owner_id") == request.state.owner_id), None) if request_id else None
             if record is not None:
                 actual = (record.original_filename, record.expected_size, record.options.source_language,
                     record.options.target_language, record.options.quality_profile, record.options.video_codec,
@@ -82,7 +96,7 @@ def create_upload(payload: UploadCreateRequest) -> UploadCreateResponse:
                     additional_languages=payload.additional_languages,
                     audio_filter=payload.audio_filter,
                     review_subtitles=payload.review_subtitles,
-                    metadata={"upload_request_id": request_id} if request_id else None,
+                    metadata={"upload_request_id": request_id, "owner_id": request.state.owner_id},
                 )
     except StorageLimitError as exc:
         raise HTTPException(status_code=status.HTTP_507_INSUFFICIENT_STORAGE, detail=str(exc)) from exc
@@ -179,8 +193,9 @@ def complete_upload(job_id: str) -> dict[str, str]:
 
 
 @router.get("/jobs", response_model=JobListResponse)
-def list_jobs() -> JobListResponse:
-    return JobListResponse(jobs=[job_to_response(record) for record in repository.list()])
+def list_jobs(request: Request) -> JobListResponse:
+    return JobListResponse(jobs=[job_to_response(record) for record in repository.list()
+        if record.metadata.get("owner_id") == request.state.owner_id])
 
 
 @router.get("/jobs/{job_id}")
