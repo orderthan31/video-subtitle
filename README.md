@@ -28,6 +28,8 @@ React UI와 독립 Worker, FFmpeg 파이프라인 및 Gemini 어댑터 초안을
 
 ## 로컬 실행
 
+Worker/Web과 Docker Compose를 포함한 전체 실행 방법은 [설치 및 실행](docs/running.md)을 참고합니다.
+
 Python 의존성은 가상환경에서 설치하는 것을 권장합니다.
 
 ```powershell

@@ -1,0 +1,52 @@
+services:
+  api:
+    build: .
+    init: true
+    restart: unless-stopped
+    environment: &storage
+      VIDEO_STORAGE_ROOT: /data/video-jobs
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10737418240}
+      VIDEO_SERVICE_QUOTA_BYTES: ${VIDEO_SERVICE_QUOTA_BYTES:-322122547200}
+      MIN_FREE_SPACE_BYTES: ${MIN_FREE_SPACE_BYTES:-53687091200}
+    volumes:
+      - jobs:/data/video-jobs
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 5
+  worker:
+    build: .
+    init: true
+    restart: unless-stopped
+    command: ["python", "-m", "media_worker.worker"]
+    stop_grace_period: 30s
+    environment:
+      <<: *storage
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in the root .env}
+      GEMINI_TRANSCRIPTION_MODEL: ${GEMINI_TRANSCRIPTION_MODEL:-gemini-3.5-transcribe}
+      GEMINI_TRANSLATION_MODEL: ${GEMINI_TRANSLATION_MODEL:-gemini-3.8-flash}
+      VIDEO_ENCODER: ${VIDEO_ENCODER:-hevc_nvenc}
+      ALLOW_SOFTWARE_ENCODER_FALLBACK: ${ALLOW_SOFTWARE_ENCODER_FALLBACK:-true}
+      RESULT_TTL_HOURS: ${RESULT_TTL_HOURS:-24}
+      UPLOAD_TTL_HOURS: ${UPLOAD_TTL_HOURS:-6}
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-5}
+    volumes:
+      - jobs:/data/video-jobs
+    depends_on:
+      api:
+        condition: service_healthy
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  jobs:

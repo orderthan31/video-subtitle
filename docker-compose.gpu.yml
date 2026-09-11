@@ -1,0 +1,13 @@
+services:
+  worker:
+    environment:
+      VIDEO_ENCODER: hevc_nvenc
+      ALLOW_SOFTWARE_ENCODER_FALLBACK: "false"
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
