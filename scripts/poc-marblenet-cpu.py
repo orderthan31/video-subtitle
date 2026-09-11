@@ -46,6 +46,7 @@ def main():
     p.add_argument('--srt',type=Path,required=True)
     p.add_argument('--out',type=Path,required=True)
     p.add_argument('--limit-seconds',type=float,default=0)
+    p.add_argument('--export-onset', choices=['0.3','0.5','0.7'], default='0.5')
     args = p.parse_args()
     if args.limit_seconds < 0:
         p.error('limit must be nonnegative')
@@ -97,17 +98,18 @@ def main():
         intervals[name] = kept
         results[name] = base.metrics(kept,cues,duration)
     report = dict(duration_seconds=duration,labels=labels,model_parameters=sum(x.numel() for x in model.parameters()),
+                  export_onset=float(args.export_onset),
                   model_bytes=args.model.stat().st_size,torch=torch.__version__,cuda=torch.version.cuda,
                   device='cpu',threads=1,window_seconds=.63,hop_seconds=.08,batch_size=64,
-                  preprocessing='mean of stereo, no gain, official mel frontend, dither disabled',
+                  preprocessing='channel mean (identity for mono), no gain, official mel frontend, dither disabled',
                   postprocessing='non-speech >=3s; padding .3s; merge gap .4s; no short speech discard',
                   model_load_seconds=load_seconds,inference_seconds=inference_seconds,
                   baseline_rss_bytes=rss_before,analysis_peak_rss_bytes=getattr(memory,'peak_wset',memory.rss),
                   variants=results,input_sha256=hashes,
                   inputs_unchanged=all(base.digest(x)==hashes[str(x)] for x in [args.audio,args.srt,args.model]))
     if not args.limit_seconds:
-        manifest = comparison.write_segments(args.audio,args.out/'segments',intervals['0.5'])
-        assert len(manifest)==results['0.5']['segments_60s']
+        manifest = comparison.write_segments(args.audio,args.out/'segments',intervals[args.export_onset])
+        assert len(manifest)==results[args.export_onset]['segments_60s']
         (args.out/'segments.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
     report['script_seconds_excluding_imports'] = time.perf_counter()-start
     np.save(args.out/'probabilities.npy',probabilities)
