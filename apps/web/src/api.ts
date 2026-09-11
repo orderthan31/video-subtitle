@@ -1,4 +1,5 @@
 import {blockSize, verifyUploadedPrefix} from './upload-verification';
+import {authenticatedFetch} from './auth-session';
 
 export const base = import.meta.env.VITE_API_BASE_URL || '/api';
 export type Job = {
@@ -13,7 +14,7 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(base + path, init);
+  const response = await authenticatedFetch(base + path, init, path === '/auth/login');
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(response.status, typeof body.detail === 'string' ? body.detail : body.detail?.message || `요청 실패 (${response.status})`);

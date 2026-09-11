@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-no
 COPY packages/shared /app/packages/shared
 COPY apps/api /app/apps/api
 COPY workers/media /app/workers/media
+COPY scripts/manage-account.py /app/scripts/manage-account.py
 RUN pip install --no-cache-dir /app/packages/shared /app/apps/api /app/workers/media \
     && useradd --uid 10001 --create-home media \
     && mkdir -p /data/video-jobs && chown -R media:media /data

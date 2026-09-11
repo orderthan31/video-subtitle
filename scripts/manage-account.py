@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--database", type=Path, default=Path(os.getenv("AUTH_DATABASE_PATH",
         str(Path(os.getenv("VIDEO_STORAGE_ROOT", "data/video-jobs")) / ".auth/accounts.sqlite3"))))
     args = parser.parse_args()
+    if not sys.stdin.isatty():
+        parser.error("An interactive terminal is required for hidden password input")
     password = getpass.getpass("New password (12-256 characters): ")
     if password != getpass.getpass("Confirm password: "):
         parser.error("Passwords do not match")

@@ -2,7 +2,7 @@
 
 ## 현재 범위
 
-API의 선택적 로컬 계정 인증을 구현했다. 웹 로그인 화면 연결은 아직 진행 중이므로 현재 UI에서 사용하려면 기본 익명 개발 모드를 유지한다. 외부 공개 서버로 사용하기 전에 웹 인증 연결, HTTPS 및 프록시 설정 검증이 필요하다. 공개 회원가입은 없으며 관리자가 계정을 발급한다.
+선택적 로컬 계정 인증 API와 웹 로그인/로그아웃을 구현했다. 초기 세션 확인을 마친 뒤 작업실을 표시하고, 세션이 폐기되거나 만료되면 작업실을 해제하여 업로드 요청을 중단하고 로그인 화면으로 돌아간다. 비밀번호와 CSRF 토큰은 브라우저 영속 저장소에 저장하지 않는다. 외부 공개 서버로 사용하기 전에 HTTPS 및 프록시 설정 검증이 필요하다. 공개 회원가입은 없으며 관리자가 계정을 발급한다.
 
 실제 API 키와 비밀번호는 `.env.example`, Git, 명령행 인자에 넣지 않는다. `.env`는 Git에서 제외한다.
 
@@ -26,7 +26,7 @@ python scripts/manage-account.py reset-password alice
 - `AUTH_SESSION_HOURS=8`: 1~168시간의 절대 세션 수명. 활동으로 연장되지 않는다.
 - `WEB_CORS_ORIGINS`: 허용 웹 Origin을 정확히 지정한다. 웹/API는 같은 사이트를 사용하고 로컬에서도 `localhost`와 `127.0.0.1`을 혼용하지 않는다.
 
-설정 변경 후 API를 재시작한다. 위 값의 잘못된 불리언이나 수명은 시작 시 거부한다. 현재 Docker Compose에 인증 환경 변수 연결은 아직 추가하지 않았다.
+설정 변경 후 API를 재시작한다. 위 값의 잘못된 불리언이나 수명은 시작 시 거부한다. Docker Compose도 인증 활성/쿠키/수명과 웹 Origin을 전달한다. 컨테이너 DB는 공유 작업 볼륨의 기본 `.auth/accounts.sqlite3`를 사용한다. 컨테이너 계정은 대화형 터미널에서 `docker compose exec api python scripts/manage-account.py create alice`로 발급한다. 로컬 HTTP Compose 테스트에는 `AUTH_COOKIE_SECURE=false`와 실제 웹 Origin을 설정하고, HTTPS 배포에는 Secure 기본값을 유지한다. 실제 컨테이너 실행 검증은 아직 수행하지 않았다.
 
 ## API 계약
 
@@ -51,4 +51,8 @@ python scripts/manage-account.py reset-password alice
 
 ## 검증
 
-`python -m unittest discover -s tests -p test_auth.py -q`는 실제 scrypt/SQLite 및 FastAPI TestClient로 비밀번호 검증, 대소문자 중복, 토큰 해시 저장, 만료/로그아웃/비밀번호 재설정 폐기, 로그인 제한, Secure 쿠키, Origin/CSRF, 두 계정 간 API 전체 작업 경로 격리, 사용자별 멱등성, 소유 파일 Range, 익명 전환 격리를 검증한다. 테스트 파일은 짧은 임의 바이트이며 미디어 재생 검증은 아니다. 실제 브라우저 쿠키·로그인·업로드·다운로드 및 프록시/HTTPS 운영 검증은 후속 작업이다.
+`python -m unittest discover -s tests -p test_auth.py -q`는 실제 scrypt/SQLite 및 FastAPI TestClient로 비밀번호 검증, 대소문자 중복, 토큰 해시 저장, 만료/로그아웃/비밀번호 재설정 폐기, 로그인 제한, Secure 쿠키, Origin/CSRF, 두 계정 간 API 전체 작업 경로 격리, 사용자별 멱등성, 소유 파일 Range, 익명 전환 격리를 검증한다. 테스트 파일은 짧은 임의 바이트이며 미디어 재생 검증은 아니다.
+
+2026-09-11 전체 Python 165개, 웹 7개 테스트 및 TypeScript/Vite 빌드 통과. 웹 테스트는 쿠키/CSRF 전송, 세션 만료 통지, 지연된 401 응답이 새 로그인을 폐기하지 않는 것을 검사한다.
+
+별도 테스트 저장소 `data/auth-browser/bf82951e71d3407290929fdc6ef8244c`와 API 8004/웹 5177에서 실제 데스크톱 브라우저 로그인 실패 안내, 성공, 새로고침 유지, 로그아웃, 두 계정 목록 분리, 비밀번호 재설정 뒤 로그인 화면 복귀를 확인했다. 실제 HTTP 클라이언트로 767481바이트 MP4를 로그인/CSRF와 함께 업로드하여 `7e9585df5cb94eb4b1cb8b6528dba47e` 작업을 QUEUED로 만들고, 브라우저 작업 취소 후 저장된 CANCELLED 상태를 확인했다. 테스트 계정은 별도 저장소에만 생성했다. 이 시험은 Gemini/인코딩을 실행하지 않았으며 인증 상태의 브라우저 파일 선택/업로드와 파일 저장 완료, 모바일, 프록시/HTTPS는 아직 검증하지 않았다.

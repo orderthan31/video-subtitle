@@ -5,6 +5,7 @@ import {base, Job, request, resumeUpload} from './api';
 import './styles.css';
 import {StageProgress} from './StageProgress';
 import {SubtitleEditor} from './SubtitleEditor';
+import {AccountMenu, AuthGate} from './AuthGate';
 
 const labels: Record<string, string> = {UPLOADING:'업로드 중', QUEUED:'처리 대기', ANALYZING:'영상 분석', EXTRACTING_AUDIO:'오디오 추출', PREPROCESSING_AUDIO:'음성 전처리', TRANSCRIBING:'음성 전사', FILTERING_TRANSCRIPT:'전사 정리', TRANSLATING:'번역', GENERATING_SUBTITLE:'자막 생성', ENCODING:'영상 출력', VALIDATING:'결과 검증', CLEANING:'파일 정리', COMPLETED:'완료', FAILED:'실패', CANCELLED:'취소됨'};
 const terminal = (job: Job) => ['COMPLETED','FAILED','CANCELLED'].includes(job.status);
@@ -79,7 +80,7 @@ function App() {
   const visible = jobs.filter(job => filter === 'all' || (filter === 'active' ? !terminal(job)
     : filter === 'history' ? terminal(job) : job.status === 'COMPLETED'));
   return <>
-    <header><a className="brand" href="/"><Captions size={27}/><span>영상 자막 작업실</span></a><span className={'connection '+(online?'online':'')}>{online?'서버 연결됨':'서버 연결 끊김'}</span></header>
+    <header><a className="brand" href="/"><Captions size={27}/><span>영상 자막 작업실</span></a><div className="header-session"><span className={'connection '+(online?'online':'')}>{online?'서버 연결됨':'서버 연결 끊김'}</span><AccountMenu/></div></header>
     <main>
       <div className="page-title"><div><p className="eyebrow">WORKSPACE</p><h1>영상 번역</h1></div><span>{jobs.filter(job=>!terminal(job)).length}개 진행 중</span></div>
       {error && <div className="alert" role="alert"><span>{error}</span><button className="icon" title="알림 닫기" onClick={()=>setError('')}><X size={18}/></button></div>}
@@ -120,4 +121,4 @@ function App() {
     {confirm&&<div className="overlay"><div role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog"><h2 id="delete-title">작업을 삭제할까요?</h2><p>{confirm.original_filename}</p><p>작업 기록과 남아 있는 영상·자막 파일이 함께 삭제됩니다.</p><div><button autoFocus onClick={()=>setConfirm(null)}>돌아가기</button><button className="destructive" disabled={!!pending} onClick={()=>void action(confirm,'delete')}>삭제</button></div></div></div>}
   </>;
 }
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+createRoot(document.getElementById('root')!).render(<React.StrictMode><AuthGate><App/></AuthGate></React.StrictMode>);
