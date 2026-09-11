@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from functools import partial
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
@@ -20,10 +21,12 @@ from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.storage import resolve_under
+from video_service.capacity import assert_capacity
 
 router = APIRouter(prefix="/api")
 repository = FilesystemJobRepository(settings.storage_root)
-upload_service = UploadService(repository)
+upload_service = UploadService(repository, partial(assert_capacity, settings.storage_root,
+    settings.service_quota_bytes, settings.min_free_space_bytes))
 storage_guard = StorageGuard(
     root=settings.storage_root,
     max_upload_bytes=settings.max_upload_bytes,
@@ -97,6 +100,8 @@ async def upload_chunk(
             body=request.stream(),
         )
         record = repository.read(job_id)
+    except StorageLimitError as exc:
+        raise HTTPException(status_code=507, detail=str(exc)) from exc
     except UploadConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

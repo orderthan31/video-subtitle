@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import errno
+from typing import Callable
 
 from video_service.models import JobStatus
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository
+from video_service.capacity import StorageLimitError
 
 
 class UploadConflictError(ValueError):
@@ -14,8 +17,9 @@ class UploadConflictError(ValueError):
 
 
 class UploadService:
-    def __init__(self, repository: FilesystemJobRepository) -> None:
+    def __init__(self, repository: FilesystemJobRepository, capacity_check: Callable[[int], None] | None = None) -> None:
         self.repository = repository
+        self.capacity_check = capacity_check
 
     async def append_chunk(
         self,
@@ -47,7 +51,16 @@ class UploadService:
                     uploaded += len(chunk)
                     if uploaded > record.expected_size:
                         raise ValueError("업로드 크기가 선언된 파일 크기를 초과했습니다.")
+                    if self.capacity_check:
+                        file.flush()
+                        self.capacity_check(len(chunk))
                     file.write(chunk)
+                file.flush()
+            except OSError as exc:
+                file.truncate(current_size)
+                if exc.errno in {errno.ENOSPC, errno.EDQUOT}:
+                    raise StorageLimitError("Storage became full during upload") from exc
+                raise
             except BaseException:
                 file.truncate(current_size)
                 raise
