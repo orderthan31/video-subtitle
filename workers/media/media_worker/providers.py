@@ -20,6 +20,8 @@ from video_service.config import load_environment
 from video_service.timeline import identity_timeline
 from .llm_trace import begin_call, finish_call, audio_window, cached_result
 from .sentence_transcription import SCHEMA as SENTENCE_SCHEMA, transcription_prompt, validate_sentences
+from .transcription_queue import run_transcription_queue, RetryableTranscriptionError, PartialTranscriptionError
+from video_service.capacity import assert_capacity
 
 
 class GeminiProvider:
@@ -45,7 +47,7 @@ class GeminiProvider:
             finally:
                 sdk.close()
 
-    async def _request(self, parts, schema, check, model, transcription_config=None):
+    async def _request(self, parts, schema, check, model, transcription_config=None, *, max_attempts=3, trace_attempt=None):
         response = None
         trace = None
 
@@ -72,12 +74,12 @@ class GeminiProvider:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         async with self._client(capture_response) as client:
-            for attempt in range(3):
+            for attempt in range(max_attempts):
                 check()
                 payload = {"contents": [{"role": "user", "parts": parts}],
                     "generationConfig": ({"audioTranscriptionConfig": transcription_config} if transcription_config is not None
                         else {"responseMimeType": "application/json", "responseSchema": schema})}
-                trace = begin_call(model, attempt + 1, payload, self.key)
+                trace = begin_call(model, trace_attempt or attempt + 1, payload, self.key)
                 task = asyncio.create_task(client.models.generate_content(model=model,
                     contents=[types.Content(role="user", parts=sdk_parts)], config=config))
                 response = None
@@ -91,6 +93,8 @@ class GeminiProvider:
                         raise RuntimeError("Gemini SDK failed without an HTTP response") from None
                 except httpx.TransportError as error:
                     finish_call(trace, self.key, transport_error=type(error).__name__)
+                    if max_attempts == 1:
+                        raise RetryableTranscriptionError("Gemini transport failure") from None
                     if attempt == 2:
                         raise RuntimeError("Gemini connection failed after 3 attempts") from None
                 finally:
@@ -98,6 +102,9 @@ class GeminiProvider:
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
                         finish_call(trace, self.key, cancelled=True)
+                if max_attempts == 1 and response is not None and response.status_code in (429, 500, 502, 503, 504):
+                    raise RetryableTranscriptionError(f"Gemini HTTP {response.status_code}",
+                        retry_delay(response, 0), shared_cooldown=response.status_code == 429)
                 if response is None or (response.status_code in (429, 500, 502, 503, 504) and attempt < 2):
                     await wait_for_retry(retry_delay(response, attempt), check)
                     continue
@@ -117,7 +124,10 @@ class GeminiProvider:
                         logging.warning("Retrying STT window after invalid timing (%s), attempt %d/3", reason, attempt + 2)
                         await wait_for_retry(2**attempt, check)
                         continue
-                text = "".join(part.get("text", "") for part in candidates[0]["content"]["parts"])
+                try:
+                    text = "".join(part.get("text", "") for part in candidates[0]["content"]["parts"])
+                except (KeyError, TypeError, AttributeError):
+                    raise ValueError("Gemini returned malformed content") from None
                 return json.loads(text)
 
     def request(self, parts, schema, check, model, transcription_config=None):
@@ -156,30 +166,58 @@ class GeminiProvider:
                     raise
                 logging.warning("Retrying malformed sentence transcription once")
 
-    def transcribe(self, source, language, check, *, spans=None):
-        result = []
+    def transcribe(self, source, language, check, *, spans=None, progress=lambda value: None, work=None):
         with wave.open(str(source), "rb") as audio:
             rate = audio.getframerate()
             total = audio.getnframes()
-            # Non-overlapping clips avoid duplicating whole sentences at context boundaries.
             regions = identity_timeline(total / rate) if spans is None else spans
-            for first, left, right, span in transcription_windows(total, rate, regions, context_seconds=0):
-                check()
-                items = self.transcribe_window(audio, left, right, language, check)
-                for item in items:
-                    segment = TranscriptSegment.from_dict(item)
-                    if not (math.isfinite(segment.start) and math.isfinite(segment.end)
-                            and 0 <= segment.start < segment.end <= (right-left)/rate + 0.1):
-                        raise ValueError("STT returned invalid timestamps")
-                    region_first = round(span.processed_start * rate)
-                    offset = span.processed_start + (left - region_first) / rate
-                    start = offset + segment.start
-                    end = min(offset + segment.end, span.processed_end)
-                    middle = (start + end) / 2
-                    owner_start = span.processed_start + (first - region_first) / rate
-                    if start < end and owner_start <= middle < min(span.processed_end, owner_start + 60):
-                        result.append(segment.with_times(start, end))
-        return sorted(result, key=lambda segment: segment.start)
+            windows = list(transcription_windows(total, rate, regions, context_seconds=0, window_seconds=120))
+        identity = ["parallel-sentence-120-v1", self.transcription_model, transcription_prompt(language, 120),
+                    source.stat().st_size, source.stat().st_mtime_ns, [(a, b, c) for a, b, c, _ in windows]]
+        key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        path = work / "transcription" / f"{key}.json" if work is not None else None
+
+        def validate(index, result):
+            _, left, right, _ = windows[index]
+            return validate_sentences(result, (right - left) / rate)
+
+        async def operation(index, attempt):
+            _, left, right, _ = windows[index]
+            buffer = io.BytesIO()
+            with wave.open(str(source), "rb") as audio, wave.open(buffer, "wb") as chunk:
+                audio.setpos(left)
+                chunk.setparams(audio.getparams())
+                chunk.writeframes(audio.readframes(right - left))
+            with audio_window(left, right, rate, 0):
+                return await self._request([{"text": transcription_prompt(language, (right - left) / rate)},
+                    {"inlineData": {"mimeType": "audio/wav", "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}],
+                    SENTENCE_SCHEMA, lambda: None, self.transcription_model, max_attempts=1, trace_attempt=attempt)
+
+        def segments(results):
+            output = []
+            for index in sorted(results):
+                _, left, right, span = windows[index]
+                offset = span.processed_start + (left - round(span.processed_start * rate)) / rate
+                for item in results[index]:
+                    cue = TranscriptSegment.from_dict(item)
+                    output.append(cue.with_times(offset + cue.start, min(offset + cue.end, span.processed_end)))
+            return output
+
+        try:
+            results = asyncio.run(run_transcription_queue(len(windows), operation, check, progress,
+                path=path, validate=validate, before_write=lambda size: assert_capacity(work.parents[1],
+                    int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
+                    int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size)))
+        except PartialTranscriptionError as exc:
+            exc.segments = segments(exc.results)
+            prefix = {}
+            for index in range(len(windows)):
+                if index not in exc.results:
+                    break
+                prefix[index] = exc.results[index]
+            exc.prefix = segments(prefix)
+            raise
+        return segments(results)
 
     def translate(self, segments, language, check):
         schema = {"type": "ARRAY", "items": {"type": "STRING"}}
@@ -228,7 +266,7 @@ async def wait_for_retry(delay, check):
     check()
 
 
-def transcription_windows(total, rate, spans, *, context_seconds=1):
+def transcription_windows(total, rate, spans, *, context_seconds=1, window_seconds=60):
     regions = []
     previous = 0.0
     for span in spans:
@@ -244,8 +282,8 @@ def transcription_windows(total, rate, spans, *, context_seconds=1):
     if round(previous * rate) != total:
         raise ValueError("Transcription timeline does not cover audio")
     for start, end, span in regions:
-        for first in range(start, end, rate * 60):
-            yield first, max(start, first - rate * context_seconds), min(end, first + rate * (60 + context_seconds)), span
+        for first in range(start, end, rate * window_seconds):
+            yield first, max(start, first - rate * context_seconds), min(end, first + rate * (window_seconds + context_seconds)), span
 
 
 class WordTimestampError(ValueError):

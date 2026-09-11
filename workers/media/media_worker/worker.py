@@ -21,6 +21,7 @@ from .providers import GeminiProvider
 from .llm_trace import capture_calls
 from .checkpoints import Checkpoints
 from .sentence_transcription import transcription_prompt
+from .transcription_queue import PartialTranscriptionError
 from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
@@ -162,8 +163,27 @@ class Worker:
                         "vocalization_filter_enabled": filter_enabled == "true" and record.options.audio_filter != "off",
                         "vocalization_removal_count": len(vocalizations)})
                     self.transition(job_id, JobStatus.TRANSCRIBING)
-                    segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe", lambda: [
-                        s.to_dict() for s in self.provider.transcribe(audio, record.options.source_language, check, spans=spans)])]
+                    def transcription_progress(value):
+                        with wait_for_job_lock(repo, job_id, check=check):
+                            current = repo.read(job_id)
+                            current.metadata["transcription_progress"] = value
+                            current.metadata["stage_progress"] = value["completed"] / value["total"] if value["total"] else 1
+                            current.status_message = "진행 중 요청 회수 중" if value["draining"] else "음성 전사 중"
+                            repo.save(current)
+                    try:
+                        segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe-parallel-120-v1", lambda: [
+                            s.to_dict() for s in self.provider.transcribe(audio, record.options.source_language, check,
+                                spans=spans, work=work, progress=transcription_progress)])]
+                    except PartialTranscriptionError as exc:
+                        partial = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in exc.segments]
+                        prefix = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in exc.prefix]
+                        write_json_atomic(work / "partial-transcript.json", {"incomplete": True,
+                            "failed_segments": [index + 1 for index in exc.failed],
+                            "segments": [s.to_dict() for s in filter_transcript_segments(partial, record.options.audio_filter)]})
+                        cues = segment_subtitles(filter_transcript_segments(prefix, record.options.audio_filter),
+                            line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
+                        (work / "partial-original.srt").write_text(segments_to_srt(cues), encoding="utf-8")
+                        raise
                     segments = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in segments]
                     self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
                     segments = filter_transcript_segments(segments, record.options.audio_filter)

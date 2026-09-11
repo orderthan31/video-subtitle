@@ -12,6 +12,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.providers import GeminiProvider, retry_delay
+from media_worker.transcription_queue import RetryableTranscriptionError
 from media_worker.process import Cancelled
 from media_worker.llm_trace import capture_calls, audio_window
 from sdk_fixture import sdk_fixture
@@ -57,6 +58,14 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
         self.client.post.return_value = httpx.Response(401)
         with self.assertRaisesRegex(RuntimeError, "HTTP 401"):
             await self.request()
+        self.assertEqual(self.client.post.call_count, 1)
+
+    async def test_parallel_attempt_has_no_nested_transport_retries(self):
+        self.client.post.return_value = httpx.Response(429, headers={"Retry-After": "2"})
+        with self.assertRaises(RetryableTranscriptionError) as error:
+            await self.provider._request([], {}, lambda: None, "test-model", max_attempts=1, trace_attempt=3)
+        self.assertTrue(error.exception.shared_cooldown)
+        self.assertEqual(error.exception.delay, 2)
         self.assertEqual(self.client.post.call_count, 1)
 
     def transcription_response(self, start, end):

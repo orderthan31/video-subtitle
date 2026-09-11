@@ -9,6 +9,7 @@ export type Job = {
   source_language: string; video_codec?: string; subtitle_mode?: string; resolution?: string; additional_languages?: string[]; audio_filter?: string; review_subtitles?: boolean;
   error: string | null; status_message?: string | null;
   metadata: {cancel_requested?: boolean; duration?: number; stage_progress?: number | null; result_files?: string[];
+    transcription_progress?: {total: number; completed: number; in_flight: number; retrying: number; failed: number; draining: boolean};
     results_expired_at?: string; upload_expired_at?: string};
 };
 export class ApiError extends Error {

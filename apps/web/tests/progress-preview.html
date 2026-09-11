@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Progress fixture</title></head>
+<body><main id="root"></main><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {StageProgress} from '../src/StageProgress.tsx';
+import '../src/styles.css';
+const jobs = [
+  {status:'TRANSCRIBING', metadata:{transcription_progress:{total:24,completed:11,in_flight:3,retrying:1,failed:0,draining:false}}},
+  {status:'TRANSCRIBING', metadata:{transcription_progress:{total:24,completed:13,in_flight:2,retrying:0,failed:1,draining:true}}},
+  {status:'FAILED', metadata:{transcription_progress:{total:24,completed:15,in_flight:0,retrying:0,failed:1,draining:false}}}
+];
+createRoot(document.getElementById('root')).render(React.createElement('section', {}, jobs.map((job,index) =>
+  React.createElement('article', {className:'job-row',key:index}, React.createElement(StageProgress,{job})))));
+</script></body></html>

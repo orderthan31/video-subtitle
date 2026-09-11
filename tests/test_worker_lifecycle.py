@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.worker import Worker
 from media_worker.process import Cancelled
+from media_worker.transcription_queue import PartialTranscriptionError
 from video_service.storage import remove_path_inside
 from video_service.locking import job_lock
 from video_service.models import JobStatus, QualityProfile
@@ -190,6 +191,39 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(record.status, JobStatus.FAILED)
         self.assertIn("additional translation failed", record.error)
         self.assertEqual({p.name for p in self.repo.job_dir(self.job).iterdir()}, {"job.json"})
+
+    def test_partial_transcription_is_preserved_without_translation_or_encoding(self):
+        (self.root / ".preserve-artifacts").touch()
+        self.repo.update_status(self.job, JobStatus.QUEUED)
+        provider = Mock(transcription_model="test-stt", translation_model="test-translation", audio_filter_model="test-filter")
+        error = PartialTranscriptionError({}, [1])
+        error.segments = [TranscriptSegment(0, 1, "First."), TranscriptSegment(3, 4, "Later.")]
+        error.prefix = error.segments[:1]
+        def fail(*args, **kwargs):
+            kwargs["progress"]({"total": 3, "completed": 2, "in_flight": 0, "retrying": 0, "failed": 1, "draining": False})
+            raise error
+        provider.transcribe.side_effect = fail
+        audio = self.repo.job_dir(self.job) / "work/audio.wav"
+        audio.write_bytes(b"audio")
+        (audio.parent / "processed-audio.wav").write_bytes(b"processed")
+        (audio.parent / "timeline-map.json").write_text("[]")
+        metadata = {"duration": 5, "streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}
+        with ExitStack() as stack:
+            stack.enter_context(patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"))
+            stack.enter_context(patch("media_worker.worker.probe", return_value=metadata))
+            stack.enter_context(patch("media_worker.worker.extract_audio", return_value=audio))
+            stack.enter_context(patch("media_worker.worker.preprocess_audio", return_value=(audio,
+                build_timeline_from_kept_intervals([(0, 5)]))))
+            encode = stack.enter_context(patch("media_worker.worker.run_process"))
+            Worker(self.repo, provider).process(self.job)
+        provider.translate.assert_not_called()
+        encode.assert_not_called()
+        record = self.repo.read(self.job)
+        self.assertEqual(record.status, JobStatus.FAILED)
+        self.assertEqual(record.metadata["transcription_progress"]["completed"], 2)
+        self.assertIn("First.", (audio.parent / "partial-original.srt").read_text(encoding="utf-8"))
+        self.assertNotIn("Later.", (audio.parent / "partial-original.srt").read_text(encoding="utf-8"))
+        self.assertIn("Later.", (audio.parent / "partial-transcript.json").read_text(encoding="utf-8"))
 
     def test_collection_skips_live_execution(self):
         self.repo.update_status(self.job, JobStatus.ENCODING)
