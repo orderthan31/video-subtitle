@@ -17,6 +17,7 @@ function App() {
   const [filter,setFilter] = useState('all'), [uploadId,setUploadId] = useState(''), [busy,setBusy] = useState(false);
   const [progress,setProgress] = useState(0), [confirm,setConfirm] = useState<Job|null>(null), [pending,setPending] = useState('');
   const [resumeId,setResumeId] = useState('');
+  const creationRequest = useRef<{signature: string; key: string} | null>(null);
   const controller = useRef<AbortController|null>(null), active = useRef(false), input = useRef<HTMLInputElement>(null);
   async function refresh() {
     try { const data = await request<{jobs: Job[]}>('/jobs'); setJobs(data.jobs); setOnline(true); }
@@ -29,6 +30,7 @@ function App() {
   }, [file]);
   function choose(next: File | undefined) {
     if (!next || active.current) return;
+    creationRequest.current = null;
     if (resumeId) {
       const job = jobs.find(item => item.job_id === resumeId);
       if (!job || next.name !== job.original_filename || next.size !== job.expected_size) {setError('원래 업로드한 파일과 이름·크기가 일치해야 합니다.'); return;}
@@ -43,7 +45,12 @@ function App() {
     try {
       let id = uploadId;
       if (!id) {
-        const created = await request<{job_id: string}>('/uploads', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({filename:file.name,size:file.size,source_language:source,target_language:target,quality_profile:quality})});
+        const payload = {filename:file.name,size:file.size,source_language:source,target_language:target,quality_profile:quality};
+        const signature = JSON.stringify(payload);
+        if (creationRequest.current?.signature !== signature) {
+          creationRequest.current = {signature, key:crypto.randomUUID()};
+        }
+        const created = await request<{job_id: string}>('/uploads', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload,request_id:creationRequest.current.key})});
         id = created.job_id; setUploadId(id);
       }
       await resumeUpload(file,id,abort.signal,setProgress);

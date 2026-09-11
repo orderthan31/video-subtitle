@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, UUID4
 
 from video_service.models import JobRecord, JobStatus, QualityProfile
 
 
 class UploadCreateRequest(BaseModel):
+    request_id: UUID4 | None = None
     filename: str = Field(min_length=1, max_length=255)
     size: int = Field(gt=0)
     source_language: str = "auto"

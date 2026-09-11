@@ -26,6 +26,7 @@ class FilesystemJobRepository:
         source_language: str,
         target_language: str,
         quality_profile: QualityProfile,
+        metadata: dict | None = None,
     ) -> JobRecord:
         job_id = uuid4().hex
         source_filename = f"source{safe_suffix(original_filename)}"
@@ -40,6 +41,7 @@ class FilesystemJobRepository:
             source_filename=source_filename,
             expected_size=expected_size,
             options=JobOptions(source_language, target_language, quality_profile),
+            metadata=dict(metadata or {}),
         )
         self.save(record)
         return record

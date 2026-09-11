@@ -52,14 +52,26 @@ def health() -> dict[str, str]:
 def create_upload(payload: UploadCreateRequest) -> UploadCreateResponse:
     try:
         with job_lock(repository, "0" * 32):
-            storage_guard.assert_can_accept_upload(payload.size)
-            record = repository.create_job(
-                original_filename=payload.filename,
-                expected_size=payload.size,
-                source_language=payload.source_language,
-                target_language=payload.target_language,
-                quality_profile=payload.quality_profile,
-            )
+            request_id = str(payload.request_id) if payload.request_id else None
+            record = next((job for job in repository.list()
+                if job.metadata.get("upload_request_id") == request_id), None) if request_id else None
+            if record is not None:
+                actual = (record.original_filename, record.expected_size, record.options.source_language,
+                    record.options.target_language, record.options.quality_profile)
+                expected = (payload.filename, payload.size, payload.source_language,
+                    payload.target_language, payload.quality_profile)
+                if actual != expected:
+                    raise HTTPException(status_code=409, detail="생성 요청 식별자가 다른 업로드 설정에 사용되었습니다.")
+            else:
+                storage_guard.assert_can_accept_upload(payload.size)
+                record = repository.create_job(
+                    original_filename=payload.filename,
+                    expected_size=payload.size,
+                    source_language=payload.source_language,
+                    target_language=payload.target_language,
+                    quality_profile=payload.quality_profile,
+                    metadata={"upload_request_id": request_id} if request_id else None,
+                )
     except StorageLimitError as exc:
         raise HTTPException(status_code=status.HTTP_507_INSUFFICIENT_STORAGE, detail=str(exc)) from exc
 
