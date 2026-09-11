@@ -114,7 +114,8 @@ class Worker:
                     encoder = select_encoder(work, check, video_codec=record.options.video_codec)
                 source = repo.source_path(record).resolve()
                 checkpoints = Checkpoints(work, {"version": 1, "source_size": source.stat().st_size,
-                    "source_mtime": source.stat().st_mtime_ns, "options": record.options.to_dict(),
+                    "source_mtime": source.stat().st_mtime_ns, "options": {key: value for key, value in record.options.to_dict().items()
+                        if key != "video_description" or value},
                     "stt": getattr(self.provider, "transcription_model", None),
                     "transcription_policy": transcription_prompt(record.options.source_language, 0),
                     "translation": getattr(self.provider, "translation_model", None),
@@ -204,7 +205,8 @@ class Worker:
                         try:
                             translated = [TranscriptSegment.from_dict(item) for item in checkpoints.run("translate-parallel-40-v1-" + language,
                                 lambda: [s.to_dict() for s in self.provider.translate(segments, language, check,
-                                    work=work, progress=translation_progress)])]
+                                    work=work, progress=translation_progress,
+                                    video_description=record.options.video_description)])]
                         except PartialTranslationError as exc:
                             write_json_atomic(work / f"partial-{stem}.json", {"incomplete": True,
                                 "failed_batches": [i + 1 for i in exc.failed],

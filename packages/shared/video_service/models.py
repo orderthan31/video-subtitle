@@ -77,8 +77,12 @@ class JobOptions:
     additional_languages: list[str] = field(default_factory=list)
     audio_filter: str = "conservative"
     review_subtitles: bool = False
+    video_description: str = ""
 
     def __post_init__(self):
+        if not isinstance(self.video_description, str) or len(self.video_description) > 2000:
+            raise ValueError("Video description must be at most 2000 characters")
+        self.video_description = self.video_description.strip()
         validate_additional_languages(self.target_language, self.additional_languages)
         if self.audio_filter not in {"off", "conservative", "strong"}:
             raise ValueError("Unsupported audio filter")
@@ -102,6 +106,7 @@ class JobOptions:
             additional_languages=data.get("additional_languages", []),
             audio_filter=str(data.get("audio_filter", "conservative")),
             review_subtitles=bool(data.get("review_subtitles", False)),
+            video_description=data.get("video_description", ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +120,7 @@ class JobOptions:
             "additional_languages": list(self.additional_languages),
             "audio_filter": self.audio_filter,
             "review_subtitles": self.review_subtitles,
+            "video_description": self.video_description,
         }
 
 

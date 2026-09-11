@@ -69,7 +69,7 @@ class UploadCreationTests(unittest.TestCase):
         for changes in ({"filename": "other.mp4"}, {"size": 7}, {"source_language": "en"},
                         {"target_language": "ja"}, {"quality_profile": "high"}, {"video_codec": "h264"},
                         {"subtitle_mode": "soft"}, {"resolution": "720p"}, {"additional_languages": ["ja"]},
-                        {"audio_filter": "off"}, {"review_subtitles": True}):
+                        {"audio_filter": "off"}, {"review_subtitles": True}, {"video_description": "A comedy"}):
             response = self.client.post("/api/uploads", json={**self.payload, **changes})
             self.assertEqual(response.status_code, 409)
         self.assertEqual(len(self.repo.list()), 1)
@@ -101,6 +101,20 @@ class UploadCreationTests(unittest.TestCase):
         self.assertEqual(JobOptions.from_dict({}).video_codec, "hevc")
         with self.assertRaises(ValueError):
             JobOptions.from_dict({"video_codec": "av1"})
+
+    def test_description_is_validated_normalized_and_persisted(self):
+        from video_service.models import JobOptions
+        self.assertEqual(JobOptions.from_dict({}).video_description, "")
+        payload = {**self.payload, "video_description": "  A comedy about old friends.  "}
+        response = self.client.post("/api/uploads", json=payload)
+        self.assertEqual(response.status_code, 201)
+        job_id = response.json()["job_id"]
+        self.assertEqual(self.repo.read(job_id).options.video_description, "A comedy about old friends.")
+        self.assertEqual(self.client.get(f"/api/jobs/{job_id}").json()["video_description"], "A comedy about old friends.")
+        self.assertEqual(self.client.post("/api/uploads", json=payload).json()["job_id"], job_id)
+        for value in ("x" * 2001, None, 123):
+            self.assertEqual(self.client.post("/api/uploads", json={**self.payload, "video_description": value}).status_code, 422)
+        self.assertEqual(JobOptions.from_dict({"video_description": " \n "}).video_description, "")
 
     def test_subtitle_mode_validation_and_persistence(self):
         from video_service.models import JobOptions

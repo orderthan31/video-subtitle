@@ -4,7 +4,7 @@ Translation now reuses the transcription scheduler: at most three concurrent
 requests, immediate refill, at most three total attempts per batch per run,
 shared 429 cooldown, no nested transport retries, and stop-and-drain on exhaustion.
 Non-retryable failures stop admission immediately. The batch size remains 40
-sentences and the prompt is byte-for-byte unchanged from sequential translation.
+sentences and, without a video description, the prompt is byte-for-byte unchanged from sequential translation.
 Target languages still run one at a time, preserving the three-request cap.
 
 Successful batches are retained in work/translation/<identity>.json. Identity
@@ -18,7 +18,25 @@ continues to protect failed job files.
 The web UI reports completed/total batches, requests in flight, retry wait and
 draining state for the current target language. This is batch progress, not ETA.
 
-## 1001.mp4 Comparison
+## Optional Video Description
+
+Uploads accept `video_description`, an optional string of up to 2000 characters.
+Whitespace is trimmed; blank input retains the original translation prompt.
+The description is persisted in job options, returned by the API and restored
+when resuming an upload. Upload creation idempotency includes the description.
+The form locks it after creation and clears it on successful upload completion.
+
+Every translation batch and target language receives the same description as
+quoted contextual reference for idiomatic transcreation: tone, register, humor
+and character relationships. Explicit dialogue takes priority over conflicting
+context. Meaning, negation, names, facts, entry count and order must be preserved;
+the prompt forbids invented dialogue and instructions embedded in the description.
+Transcription is unchanged. Description-bearing prompts have separate batch cache
+identities and are retained in the existing private LLM traces. Empty descriptions
+are omitted from whole-job checkpoint identity to preserve legacy retry caches.
+No paid translation was used in the feature's unit tests.
+
+## 1001.mp4 Comparison Results
 
 The explicit comparison script is scripts/compare-parallel-translation.py.
 It reads a completed job, snapshots the old translation and source transcript,

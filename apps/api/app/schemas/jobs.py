@@ -20,9 +20,11 @@ class UploadCreateRequest(BaseModel):
     additional_languages: list[str] = Field(default_factory=list, max_length=4)
     audio_filter: Literal["off", "conservative", "strong"] = "conservative"
     review_subtitles: bool = False
+    video_description: str = Field(default="", max_length=2000)
 
     @model_validator(mode="after")
     def validate_languages(self):
+        self.video_description = self.video_description.strip()
         validate_additional_languages(self.target_language, self.additional_languages)
         return self
 
@@ -70,6 +72,7 @@ class JobResponse(BaseModel):
     additional_languages: list[str]
     audio_filter: str
     review_subtitles: bool
+    video_description: str = ""
     status_message: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -111,6 +114,7 @@ def job_to_response(record: JobRecord) -> JobResponse:
         additional_languages=record.options.additional_languages,
         audio_filter=record.options.audio_filter,
         review_subtitles=record.options.review_subtitles,
+        video_description=record.options.video_description,
         status_message=record.status_message,
         error=record.error,
         metadata=record.metadata,
