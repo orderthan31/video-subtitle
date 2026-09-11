@@ -162,7 +162,7 @@ def encoding_args(source, destination, video_stream, quality="balanced", softwar
     args += ["-preset", "medium", "-crf", str(cq)] if software else ["-preset", "p5", "-rc", "vbr", "-cq", str(cq), "-b:v", "0"]
     return args + ["-g", str(max(1, round(fps * 2))), "-tag:v", "hvc1" if video_codec == "hevc" else "avc1", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
-        "-progress", "encode-progress.txt", "-nostats", destination]
+        "-progress", "pipe:1", "-nostats", destination]
 
 
 def select_encoder(work, check=lambda: None, video_codec="hevc"):

@@ -187,7 +187,7 @@ class Worker:
                 software = encoder in {"libx265", "libx264"}
                 with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
                     self.transition(job_id, JobStatus.ENCODING, message="영상 인코딩 중")
-                    progress_path = work / "encode-progress.txt"
+                    progress_path = work / "encode.log"
                     progress_duration = metadata["duration"]
                     run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software,
                         record.options.video_codec, record.options.subtitle_mode, record.options.target_language,
