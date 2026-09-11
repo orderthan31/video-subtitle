@@ -8,7 +8,7 @@ from video_service.locking import job_lock, JobBusyError
 from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.storage import remove_path_inside, write_json_atomic
-from video_service.subtitles import segments_to_srt
+from video_service.subtitles import segments_to_srt, segment_subtitles
 from video_service.timeline import map_segment_to_original
 from video_service.transcript import filter_transcript_segments
 from .media import probe, extract_audio, preprocess_audio, encoding_args, select_encoder
@@ -81,7 +81,8 @@ class Worker:
                 translated = self.provider.translate(segments, record.options.target_language, check)
                 write_json_atomic(work / "translated.json", [s.to_dict() for s in translated])
                 self.transition(job_id, JobStatus.GENERATING_SUBTITLE)
-                srt = segments_to_srt(translated)
+                cues = segment_subtitles(translated, line_width=24 if record.options.target_language in {"ko", "ja", "zh"} else 42)
+                srt = segments_to_srt(cues)
                 if not srt.strip():
                     raise ValueError("No speech subtitles detected")
                 output = repo.job_dir(job_id) / "output"
