@@ -171,7 +171,7 @@ class Worker:
                             current.status_message = "진행 중 요청 회수 중" if value["draining"] else "음성 전사 중"
                             repo.save(current)
                     try:
-                        segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe-parallel-120-v1", lambda: [
+                        segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe-parallel-60-v1", lambda: [
                             s.to_dict() for s in self.provider.transcribe(audio, record.options.source_language, check,
                                 spans=spans, work=work, progress=transcription_progress)])]
                     except PartialTranscriptionError as exc:

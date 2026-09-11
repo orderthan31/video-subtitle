@@ -171,8 +171,8 @@ class GeminiProvider:
             rate = audio.getframerate()
             total = audio.getnframes()
             regions = identity_timeline(total / rate) if spans is None else spans
-            windows = list(transcription_windows(total, rate, regions, context_seconds=0, window_seconds=120))
-        identity = ["parallel-sentence-120-v1", self.transcription_model, transcription_prompt(language, 120),
+            windows = list(transcription_windows(total, rate, regions, context_seconds=0, window_seconds=60))
+        identity = ["parallel-sentence-60-v1", self.transcription_model, transcription_prompt(language, 60),
                     source.stat().st_size, source.stat().st_mtime_ns, [(a, b, c) for a, b, c, _ in windows]]
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         path = work / "transcription" / f"{key}.json" if work is not None else None

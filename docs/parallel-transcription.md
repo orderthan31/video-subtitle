@@ -6,8 +6,8 @@ Checkpoint before this change: 7a39622, pushed to origin/master.
 
 - A job still owns the single global worker slot. Only its transcription requests
   run concurrently; translation remains sequential in batches of up to 40 cues.
-- Audio windows are at most 120 seconds, non-overlapping and bounded by retained
-  timeline regions. Output cues remain sentence-level, not 120-second subtitles.
+- Audio windows are at most 60 seconds, non-overlapping and bounded by retained
+  timeline regions. Output cues remain sentence-level, not 60-second subtitles.
 - At most three requests run concurrently. A completed request frees its slot
   immediately. Eligible retries are admitted before untouched windows; during a
   retry delay other windows may proceed. A 429 introduces shared cooldown.
@@ -42,8 +42,8 @@ published as a complete result. Translation and encoding do not start. The
 development preservation marker must remain enabled to retain failed job media;
 ordinary cleanup policy is otherwise unchanged.
 
-Older 60-second receipts are retained but not reused by the new 120-second
-transcription stage. Completed jobs are not rerun automatically. Deploy only
+Legacy sequential receipts and experimental 120-second receipts are retained
+but not reused by the parallel 60-second stage. Completed jobs are not rerun automatically. Deploy only
 when the worker is idle, so an active job is not interrupted to change policy.
 
 ## Verification
@@ -64,3 +64,10 @@ about 147 seconds for a 120-second input. Strict validation rejected them; no
 timestamp stretching, truncation or silent cue deletion was used. This confirms
 failure preservation, NOT transcription quality parity with 60-second windows.
 Translation parallelism remains deferred pending real transcription evaluation.
+
+The subsequent 60x3 check used the exact same retained six-minute excerpt in a
+fresh output folder. All six windows passed on their first attempt: 28 sentence
+cues, 20.3 seconds elapsed. There were no out-of-range timing validation errors.
+This checks response structure and timestamp bounds, not listening-based timing
+or transcript accuracy. The deployed window size is now 60 seconds; concurrency,
+retry budget, drain behavior and progress reporting are unchanged.

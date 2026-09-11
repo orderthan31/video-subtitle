@@ -143,18 +143,18 @@ class TranscriptionTests(unittest.TestCase):
         source = folder / "audio.wav"
         with wave.open(str(source), "wb") as audio:
             audio.setparams((1, 2, 100, 0, "NONE", "not compressed"))
-            audio.writeframes(bytes(123 * 100 * 2))
+            audio.writeframes(bytes(63 * 100 * 2))
         provider = GeminiProvider.__new__(GeminiProvider)
         provider.transcription_model = "test-model"
-        first = [{"start": 118.8, "end": 119.8, "text": "We keep"}]
+        first = [{"start": 58.8, "end": 59.8, "text": "We keep"}]
         second = [{"start": 0.1, "end": 0.9, "text": "every word."}]
         provider._request = AsyncMock(side_effect=[first, second])
         result = provider.transcribe(source, "en", lambda: None)
         self.assertEqual(provider._request.call_count, 2)
         self.assertEqual([segment.text for segment in result], ["We keep", "every word."])
-        self.assertAlmostEqual(result[0].start, 118.8)
-        self.assertAlmostEqual(result[1].start, 120.1)
-        self.assertAlmostEqual(result[1].end, 120.9)
+        self.assertAlmostEqual(result[0].start, 58.8)
+        self.assertAlmostEqual(result[1].start, 60.1)
+        self.assertAlmostEqual(result[1].end, 60.9)
 
     def test_raw_words_keep_intentional_repetition(self):
         parts = [{"audioTranscription": {"words": [
