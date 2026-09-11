@@ -45,7 +45,26 @@ def display_dimensions(stream):
     return None
 
 
-def validate_output(source, output, size, video_codec="hevc", subtitle_mode="burn"):
+def output_dimensions(stream, resolution="original"):
+    if resolution not in {"original", "1080p", "720p"}:
+        raise ValueError("Unsupported resolution")
+    dimensions = display_dimensions(stream)
+    if resolution == "original":
+        return dimensions
+    if dimensions is None:
+        raise ValueError("Resolution selection requires right-angle rotation")
+    width, height = dimensions
+    short, long = (1080, 1920) if resolution == "1080p" else (720, 1280)
+    max_width, max_height = (long, short) if width >= height else (short, long)
+    scale = min(1, max_width / width, max_height / height)
+    # Even dimensions are required by yuv420p; FFmpeg adjusts SAR to preserve DAR.
+    result = (int(width * scale) // 2 * 2, int(height * scale) // 2 * 2)
+    if min(result) < 2:
+        raise ValueError("Output dimensions are too small")
+    return result
+
+
+def validate_output(source, output, size, video_codec="hevc", subtitle_mode="burn", resolution="original"):
     if video_codec not in {"hevc", "h264"}:
         raise ValueError("Unsupported video codec")
     if subtitle_mode not in {"burn", "soft"}:
@@ -69,7 +88,7 @@ def validate_output(source, output, size, video_codec="hevc", subtitle_mode="bur
     if video.get("pix_fmt") != "yuv420p" or audio.get("codec_name") != "aac":
         raise ValueError("Output must use yuv420p video and AAC audio")
     original_video = next(s for s in source["streams"] if s["codec_type"] == "video")
-    expected = display_dimensions(original_video)
+    expected = output_dimensions(original_video, resolution)
     actual = (int(video.get("width", 0)), int(video.get("height", 0)))
     if min(actual) <= 0 or (expected is not None and actual != expected):
         raise ValueError("Output resolution mismatch")

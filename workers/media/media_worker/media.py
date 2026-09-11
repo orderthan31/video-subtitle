@@ -106,7 +106,11 @@ def preprocess_audio(source, work, check=lambda: None):
 
 
 def encoding_args(source, destination, video_stream, quality="balanced", software=False, video_codec="hevc",
-                  subtitle_mode="burn", target_language="ko"):
+                  subtitle_mode="burn", target_language="ko", resolution="original"):
+    from .validation import output_dimensions
+
+    if resolution not in {"original", "1080p", "720p"}:
+        raise ValueError("Unsupported resolution")
     if video_codec not in {"hevc", "h264"}:
         raise ValueError("Unsupported video codec")
     if subtitle_mode not in {"burn", "soft"}:
@@ -119,13 +123,19 @@ def encoding_args(source, destination, video_stream, quality="balanced", softwar
     if subtitle_mode == "soft":
         args += ["-i", "translated.srt"]
     args += ["-map", "0:v:0", "-map", "0:a:0"]
+    filters = []
+    if resolution != "original":
+        width, height = output_dimensions(video_stream, resolution)
+        filters.append(f"scale={width}:{height}:flags=lanczos")
     if subtitle_mode == "soft":
         language = {"ko": "kor", "en": "eng", "ja": "jpn", "zh": "zho", "es": "spa"}.get(
             target_language.split("-")[0], "und")
         args += ["-map", "1:s:0", "-c:s", "mov_text", "-disposition:s:0", "default",
             "-metadata:s:s:0", f"language={language}", "-metadata:s:s:0", f"handler_name={target_language}"]
     else:
-        args += ["-vf", "subtitles=translated.srt"]
+        filters.append("subtitles=translated.srt")
+    if filters:
+        args += ["-vf", ",".join(filters)]
     args += ["-c:v", ("libx265" if video_codec == "hevc" else "libx264") if software else f"{video_codec}_nvenc"]
     args += ["-preset", "medium", "-crf", str(cq)] if software else ["-preset", "p5", "-rc", "vbr", "-cq", str(cq), "-b:v", "0"]
     return args + ["-g", str(max(1, round(fps * 2))), "-tag:v", "hvc1" if video_codec == "hevc" else "avc1", "-pix_fmt", "yuv420p",

@@ -58,12 +58,15 @@ class JobOptions:
     quality_profile: QualityProfile = QualityProfile.BALANCED
     video_codec: str = "hevc"
     subtitle_mode: str = "burn"
+    resolution: str = "original"
 
     def __post_init__(self):
         if self.video_codec not in {"hevc", "h264"}:
             raise ValueError("Unsupported video codec")
         if self.subtitle_mode not in {"burn", "soft"}:
             raise ValueError("Unsupported subtitle mode")
+        if self.resolution not in {"original", "1080p", "720p"}:
+            raise ValueError("Unsupported resolution")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "JobOptions":
@@ -74,6 +77,7 @@ class JobOptions:
             quality_profile=QualityProfile(data.get("quality_profile", QualityProfile.BALANCED)),
             video_codec=str(data.get("video_codec", "hevc")),
             subtitle_mode=str(data.get("subtitle_mode", "burn")),
+            resolution=str(data.get("resolution", "original")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +87,7 @@ class JobOptions:
             "quality_profile": self.quality_profile.value,
             "video_codec": self.video_codec,
             "subtitle_mode": self.subtitle_mode,
+            "resolution": self.resolution,
         }
 
 

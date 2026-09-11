@@ -24,13 +24,15 @@ def main():
     work = ROOT / "data/output-validation" / uuid4().hex
     work.mkdir(parents=True)
     source = work / "rotated.mp4"
-    run_process([executable("ffmpeg"), "-nostdin", "-i", args.source.resolve(), "-c", "copy",
-        "-metadata:s:v:0", "rotate=90", source], cwd=work, log_name="rotate.log")
+    run_process([executable("ffmpeg"), "-nostdin", "-display_rotation:v:0", "90",
+        "-i", args.source.resolve(), "-c", "copy", source], cwd=work, log_name="rotate.log")
     shutil.copyfile(args.subtitle, work / "translated.srt")
     source_info = probe(source, work)
     encoder = select_encoder(work, video_codec=args.video_codec)
     target = work / "final.mp4"
     video = next(s for s in source_info["streams"] if s["codec_type"] == "video")
+    if not any(abs(float(s.get("rotation", 0))) == 90 for s in video.get("side_data_list", [])):
+        raise ValueError("Fixture is missing rotation metadata")
     run_process(encoding_args(source, target, video, software=encoder in {"libx265", "libx264"}, video_codec=args.video_codec), cwd=work, log_name="encode.log")
     output_info = probe(target, work)
     validate_output(source_info, output_info, target.stat().st_size, args.video_codec)

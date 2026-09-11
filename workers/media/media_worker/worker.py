@@ -148,12 +148,14 @@ class Worker:
                     progress_path = work / "encode-progress.txt"
                     progress_duration = metadata["duration"]
                     run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software,
-                        record.options.video_codec, record.options.subtitle_mode, record.options.target_language),
+                        record.options.video_codec, record.options.subtitle_mode, record.options.target_language,
+                        record.options.resolution),
                         cwd=work, log_name="encode.log", check=check)
                     progress_path = None
                 self.transition(job_id, JobStatus.VALIDATING)
                 final = probe(target, work, check)
-                validate_output(metadata, final, target.stat().st_size, record.options.video_codec, record.options.subtitle_mode)
+                validate_output(metadata, final, target.stat().st_size, record.options.video_codec,
+                    record.options.subtitle_mode, record.options.resolution)
                 validate_decodable(target, work, check)
                 self.transition(job_id, JobStatus.CLEANING)
                 size = target.stat().st_size

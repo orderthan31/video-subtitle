@@ -23,11 +23,14 @@ Content-Type: application/json
   "target_language": "ko",
   "quality_profile": "balanced",
   "video_codec": "hevc",
-  "subtitle_mode": "burn"
+  "subtitle_mode": "burn",
+  "resolution": "original"
 }
 ```
 
 `subtitle_mode`는 `burn`(기본 번인) 또는 `soft`(MP4 내장 자막 트랙)다. 기존 작업은 `burn`으로 해석한다. 작업 조회에도 반환하며, 같은 `request_id`에 다른 모드를 보내면 409다. 두 모드 모두 별도 SRT/SMI 결과를 제공한다.
+
+`resolution`은 `original`(기본), `1080p`, `720p`다. 가로 영상은 각각 최대 1920×1080/1280×720, 세로 영상은 반대 크기로 축소하며 작은 영상은 확대하지 않는다. 화면 비율을 유지하고 yuv420p에 맞춰 짝수 픽셀로 출력한다. 같은 `request_id`에서 해상도 변경은 409다. 작업 조회·업로드 재개에 저장된 값을 사용한다.
 
 응답:
 

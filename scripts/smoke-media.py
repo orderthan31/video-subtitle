@@ -23,6 +23,8 @@ def main():
     parser.add_argument("--audio", type=Path, required=True)
     parser.add_argument("--video-codec", choices=["hevc", "h264"], default="hevc")
     parser.add_argument("--subtitle-mode", choices=["burn", "soft"], default="burn")
+    parser.add_argument("--resolution", choices=["original", "1080p", "720p"], default="original")
+    parser.add_argument("--frame-size", choices=["640x360", "1920x1080", "2560x1440"], default="640x360")
     args = parser.parse_args()
     if not args.run_live:
         parser.error("--run-live is required; this test calls Gemini")
@@ -30,13 +32,13 @@ def main():
     work = ROOT / "data" / "live-smoke" / uuid4().hex
     work.mkdir(parents=True)
     source = work / "test.mp4"
-    run_process([executable("ffmpeg"), "-nostdin", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+    run_process([executable("ffmpeg"), "-nostdin", "-y", "-f", "lavfi", "-i", f"testsrc2=size={args.frame_size}:rate=30",
         "-i", args.audio.resolve(), "-shortest", "-c:v", "libx264", "-c:a", "aac", source],
         cwd=work, log_name="fixture.log", timeout=60)
     repo = FilesystemJobRepository(work / "jobs")
     record = repo.create_job(original_filename="test.mp4", expected_size=source.stat().st_size,
         source_language="en", target_language="ko", quality_profile=QualityProfile.BALANCED,
-        video_codec=args.video_codec, subtitle_mode=args.subtitle_mode)
+        video_codec=args.video_codec, subtitle_mode=args.subtitle_mode, resolution=args.resolution)
     shutil.copyfile(source, repo.source_path(record))
     repo.update_upload_progress(record.job_id, record.expected_size)
     repo.update_status(record.job_id, JobStatus.QUEUED)

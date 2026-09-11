@@ -44,7 +44,8 @@ class UploadCreationTests(unittest.TestCase):
     def test_changed_payload_conflicts_without_mutation(self):
         first = self.client.post("/api/uploads", json=self.payload).json()
         for changes in ({"filename": "other.mp4"}, {"size": 7}, {"source_language": "en"},
-                        {"target_language": "ja"}, {"quality_profile": "high"}, {"video_codec": "h264"}, {"subtitle_mode": "soft"}):
+                        {"target_language": "ja"}, {"quality_profile": "high"}, {"video_codec": "h264"},
+                        {"subtitle_mode": "soft"}, {"resolution": "720p"}):
             response = self.client.post("/api/uploads", json={**self.payload, **changes})
             self.assertEqual(response.status_code, 409)
         self.assertEqual(len(self.repo.list()), 1)
@@ -96,3 +97,15 @@ class UploadCreationTests(unittest.TestCase):
         second = self.client.post("/api/uploads", json=self.payload).json()
         self.assertEqual(first["job_id"], second["job_id"])
         self.assertEqual(len(self.repo.list()), 1)
+
+    def test_resolution_validation_persistence_and_legacy_default(self):
+        from video_service.models import JobOptions
+        self.assertEqual(JobOptions.from_dict({}).resolution, "original")
+        with self.assertRaises(ValueError):
+            JobOptions.from_dict({"resolution": "invalid"})
+        response = self.client.post("/api/uploads", json={**self.payload, "resolution": "720p"})
+        self.assertEqual(response.status_code, 201)
+        job_id = response.json()["job_id"]
+        self.assertEqual(self.repo.read(job_id).options.resolution, "720p")
+        self.assertEqual(self.client.get(f"/api/jobs/{job_id}").json()["resolution"], "720p")
+        self.assertEqual(self.client.post("/api/uploads", json={**self.payload, "resolution": "invalid"}).status_code, 422)

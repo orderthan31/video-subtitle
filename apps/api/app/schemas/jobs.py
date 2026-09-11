@@ -16,6 +16,7 @@ class UploadCreateRequest(BaseModel):
     quality_profile: QualityProfile = QualityProfile.BALANCED
     video_codec: Literal["hevc", "h264"] = "hevc"
     subtitle_mode: Literal["burn", "soft"] = "burn"
+    resolution: Literal["original", "1080p", "720p"] = "original"
 
 
 class UploadCreateResponse(BaseModel):
@@ -57,6 +58,7 @@ class JobResponse(BaseModel):
     quality_profile: str
     video_codec: str
     subtitle_mode: str
+    resolution: str
     status_message: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -81,6 +83,7 @@ def job_to_response(record: JobRecord) -> JobResponse:
         quality_profile=record.options.quality_profile.value,
         video_codec=record.options.video_codec,
         subtitle_mode=record.options.subtitle_mode,
+        resolution=record.options.resolution,
         status_message=record.status_message,
         error=record.error,
         metadata=record.metadata,

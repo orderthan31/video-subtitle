@@ -16,6 +16,7 @@ function App() {
   const [source,setSource] = useState('auto'), [target,setTarget] = useState('ko'), [quality,setQuality] = useState('balanced');
   const [codec,setCodec] = useState('hevc');
   const [subtitleMode,setSubtitleMode] = useState('burn');
+  const [resolution,setResolution] = useState('original');
   const [filter,setFilter] = useState('all'), [uploadId,setUploadId] = useState(''), [busy,setBusy] = useState(false);
   const [progress,setProgress] = useState(0), [confirm,setConfirm] = useState<Job|null>(null), [pending,setPending] = useState('');
   const [resumeId,setResumeId] = useState('');
@@ -47,7 +48,7 @@ function App() {
     try {
       let id = uploadId;
       if (!id) {
-        const payload = {filename:file.name,size:file.size,source_language:source,target_language:target,quality_profile:quality,video_codec:codec,subtitle_mode:subtitleMode};
+        const payload = {filename:file.name,size:file.size,source_language:source,target_language:target,quality_profile:quality,video_codec:codec,subtitle_mode:subtitleMode,resolution};
         const signature = JSON.stringify(payload);
         if (creationRequest.current?.signature !== signature) {
           creationRequest.current = {signature, key:crypto.randomUUID()};
@@ -86,6 +87,7 @@ function App() {
           <label>영상 품질<select value={quality} disabled={busy||!!uploadId} onChange={e=>setQuality(e.target.value)}><option value="balanced">균형</option><option value="high">고화질</option><option value="compact">용량 우선</option></select></label>
           <label>영상 코덱<select value={codec} disabled={busy||!!uploadId} onChange={e=>setCodec(e.target.value)}><option value="hevc">H.265 (HEVC)</option><option value="h264">H.264</option></select></label>
           <label>자막 방식<select value={subtitleMode} disabled={busy||!!uploadId} onChange={e=>setSubtitleMode(e.target.value)}><option value="burn">번인</option><option value="soft">소프트 자막</option></select></label>
+          <label>해상도<select value={resolution} disabled={busy||!!uploadId} onChange={e=>setResolution(e.target.value)}><option value="original">원본 유지</option><option value="1080p">최대 1080p</option><option value="720p">최대 720p</option></select></label>
           <div className="output-format"><span>결과 파일</span><strong>MP4 + SRT</strong></div>
           {busy ? <button className="primary" onClick={()=>controller.current?.abort()}><Pause size={18}/>업로드 일시정지</button> : <button className="primary" disabled={!file||!online} onClick={()=>void start()}>{uploadId?<Play size={18}/>:<Upload size={18}/>} {uploadId?'업로드 재개':'번역 시작'}</button>}
           {file && <div className="upload-progress"><progress value={progress} max={file.size}/><span>{bytes(progress)} / {bytes(file.size)}</span></div>}
@@ -96,7 +98,7 @@ function App() {
         {!visible.length ? <div className="empty"><FileVideo size={36}/><h3>{online?'아직 작업이 없습니다':'서버에 연결할 수 없습니다'}</h3></div> : <div className="job-list">{visible.map(job=><article key={job.job_id} className="job-row"><div className="video-icon">{job.status==='COMPLETED'?<Check/>:<FileVideo/>}</div><div className="job-description"><h3>{job.original_filename}</h3><p>{bytes(job.expected_size)} <span>·</span> {languageName(job.target_language)} <span>·</span> {new Date(job.created_at).toLocaleString('ko-KR')}</p>{job.error&&<p className="job-error">{job.error}</p>}{job.status==='UPLOADING'&&<progress aria-label={`${job.original_filename} 업로드 진행률`} max={job.expected_size} value={job.job_id===uploadId?Math.max(job.uploaded_bytes,progress):job.uploaded_bytes}/>}</div><span className={'status '+job.status.toLowerCase()}><Clock size={14}/>{job.metadata.cancel_requested&&!terminal(job)?'취소 중':labels[job.status]||job.status}</span><div className="actions">
           {job.status==='COMPLETED'&&<><a className="download" href={`${base}/jobs/${job.job_id}/results/final.mp4`}><Download size={16}/>MP4</a><a className="download" href={`${base}/jobs/${job.job_id}/results/translated.srt`}><Download size={16}/>번역 SRT</a>{job.metadata.result_files?.includes('original.srt')&&<a className="download" href={`${base}/jobs/${job.job_id}/results/original.srt`}><Download size={16}/>원문 SRT</a>}</>}
           {job.status==='COMPLETED'&&job.metadata.result_files?.includes('translated.smi')&&<a className="download" href={`${base}/jobs/${job.job_id}/results/translated.smi`}><Download size={16}/>SMI</a>}
-          {job.status==='UPLOADING'&&<button className="icon" disabled={busy} title="업로드 재개" onClick={()=>{setResumeId(job.job_id);setUploadId(job.job_id);setFile(null);setProgress(job.uploaded_bytes);setSource(job.source_language);setTarget(job.target_language);setQuality(job.quality_profile);setCodec(job.video_codec||'hevc');setSubtitleMode(job.subtitle_mode||'burn');}}><Play size={18}/></button>}
+          {job.status==='UPLOADING'&&<button className="icon" disabled={busy} title="업로드 재개" onClick={()=>{setResumeId(job.job_id);setUploadId(job.job_id);setFile(null);setProgress(job.uploaded_bytes);setSource(job.source_language);setTarget(job.target_language);setQuality(job.quality_profile);setCodec(job.video_codec||'hevc');setSubtitleMode(job.subtitle_mode||'burn');setResolution(job.resolution||'original');}}><Play size={18}/></button>}
           {terminal(job)?<button className="icon danger" title="작업 삭제" disabled={pending===job.job_id} onClick={()=>setConfirm(job)}><Trash2 size={18}/></button>:<button className="icon danger" title="작업 취소" disabled={busy||pending===job.job_id||!!job.metadata.cancel_requested} onClick={()=>void action(job,'cancel')}><X size={18}/></button>}
         </div><StageProgress job={job}/></article>)}</div>}
       </section>
