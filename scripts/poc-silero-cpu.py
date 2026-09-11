@@ -17,6 +17,15 @@ spec.loader.exec_module(comparison)
 base = comparison.base
 
 
+def prepare_chunk(raw, source_channels, mono, gain_db):
+    chunk = np.frombuffer(raw, dtype='<i2').reshape(-1, source_channels).T.astype(np.float32)/32768
+    if mono:
+        chunk = chunk.mean(axis=0, keepdims=True)
+    chunk = chunk * np.float32(10**(gain_db/20))
+    clipped = int(np.count_nonzero(np.abs(chunk)>1))
+    return np.clip(chunk,-1,1), clipped
+
+
 def retained(probabilities, duration, threshold):
     state = np.zeros(probabilities.shape[1], dtype=bool)
     quiet = []
@@ -32,7 +41,11 @@ def main():
     parser.add_argument('--prior', type=Path, required=True)
     parser.add_argument('--srt', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--mono', action='store_true')
+    parser.add_argument('--gain-db', type=float, default=0)
     args = parser.parse_args()
+    if not np.isfinite(args.gain_db) or not -24 <= args.gain_db <= 24:
+        parser.error('--gain-db must be finite and between -24 and 24')
     start = time.perf_counter()
     args.out.mkdir(parents=True, exist_ok=False)
     source = args.prior/'analysis-stereo.wav'
@@ -49,18 +62,24 @@ def main():
     load_seconds = time.perf_counter()-load_start
     inference_start = time.perf_counter()
     with wave.open(str(source), 'rb') as audio:
-        rate, channels, frames = audio.getframerate(), audio.getnchannels(), audio.getnframes()
+        rate, source_channels, frames = audio.getframerate(), audio.getnchannels(), audio.getnframes()
+        channels = 1 if args.mono else source_channels
         assert rate == 16000 and audio.getsampwidth() == 2
         duration = frames/rate
         probabilities = np.empty(((frames+511)//512, channels), dtype=np.float32)
         state = np.zeros((2, channels, 128), dtype=np.float32)
         context = np.zeros((channels, 64), dtype=np.float32)
         sample_rate = np.array(rate, dtype=np.int64)
+        clipped_samples, sample_count, square_sum, peak = 0, 0, 0., 0.
         # Official ONNX input protocol: 512 samples plus 64-sample context,
         # with independent recurrent state for each channel in the batch.
         for i in range(len(probabilities)):
             raw = audio.readframes(512)
-            chunk = np.frombuffer(raw, dtype='<i2').reshape(-1, channels).T.astype(np.float32)/32768
+            chunk, clipped = prepare_chunk(raw, source_channels, args.mono, args.gain_db)
+            clipped_samples += clipped
+            sample_count += chunk.size
+            square_sum += float(np.sum(chunk.astype(np.float64)**2))
+            peak = max(peak,float(np.abs(chunk).max()))
             chunk = np.pad(chunk, ((0,0),(0,512-chunk.shape[1])))
             model_input = np.concatenate((context,chunk),axis=1)
             output,state = session.run(None, {'input':model_input,'state':state,'sr':sample_rate})
@@ -86,6 +105,9 @@ def main():
     unchanged = all(base.digest(p)==hashes[str(p)] for p in inputs)
     memory = process.memory_info()
     report = dict(duration_seconds=duration,channels=channels,variants=results,
+                  input_processing=dict(source_channels=source_channels,mono=args.mono,gain_db=args.gain_db,
+                                        clipped_samples=clipped_samples,clipped_percent=100*clipped_samples/sample_count,
+                                        rms=float(np.sqrt(square_sum/sample_count)),peak=peak),
                   model_sha256=base.digest(args.model),model_bytes=args.model.stat().st_size,
                   upstream_commit='867c2aa692646a1f1de3e94a15c9dd9f614c0acb',
                   python=platform.python_version(),onnxruntime=ort.__version__,numpy=np.__version__,

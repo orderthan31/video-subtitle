@@ -9,6 +9,24 @@ spec.loader.exec_module(poc)
 
 
 class VadTests(unittest.TestCase):
+    def test_mono_averages_channels(self):
+        raw = poc.np.array([[16384,0],[-16384,16384]],dtype='<i2').tobytes()
+        chunk, clipped = poc.prepare_chunk(raw,2,True,0)
+        poc.np.testing.assert_array_equal(chunk,[[.25,0.]])
+        self.assertEqual(clipped,0)
+
+    def test_gain_clipping_is_counted(self):
+        raw = poc.np.array([[16384,-16384]],dtype='<i2').tobytes()
+        chunk, clipped = poc.prepare_chunk(raw,2,False,12)
+        poc.np.testing.assert_array_equal(chunk,[[1.],[-1.]])
+        self.assertEqual(clipped,2)
+
+    def test_stereo_zero_gain_preserves_input(self):
+        raw = poc.np.array([[123,-456],[789,-1011]],dtype='<i2')
+        chunk, clipped = poc.prepare_chunk(raw.tobytes(),2,False,0)
+        poc.np.testing.assert_array_equal(chunk,raw.T.astype(poc.np.float32)/32768)
+        self.assertEqual(clipped,0)
+
     def test_one_channel_preserves_speech(self):
         data = poc.np.tile([.9,.01],(200,1))
         self.assertEqual(poc.retained(data,6.4,.5),[[0.,6.4]])
