@@ -189,7 +189,27 @@ def complete_upload(job_id: str) -> dict[str, str]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except JobNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job을 찾을 수 없습니다.") from exc
-    return {"status": "queued"}
+    return {"status": "ready"}
+
+
+@router.post("/jobs/{job_id}/start")
+def start_job(job_id: str) -> dict[str, str]:
+    with job_lock(repository, "0" * 32), job_lock(repository, job_id):
+        record = _read_job_or_404(job_id)
+        if record.status == JobStatus.QUEUED:
+            return {"status": "queued"}
+        if record.status != JobStatus.READY:
+            raise HTTPException(status_code=409, detail="업로드 완료 상태에서만 실행할 수 있습니다.")
+        source = repository.source_path(record)
+        if not source.is_file() or source.stat().st_size != record.expected_size or record.uploaded_bytes != record.expected_size:
+            raise HTTPException(status_code=409, detail="완전한 원본 파일이 없습니다.")
+        try:
+            assert_capacity(repository.storage_root, settings.service_quota_bytes, settings.min_free_space_bytes,
+                remaining_reservations(repository))
+        except StorageLimitError as exc:
+            raise HTTPException(status_code=507, detail=str(exc)) from exc
+        repository.update_status(job_id, JobStatus.QUEUED, message="실행 순서 대기 중")
+        return {"status": "queued"}
 
 
 @router.get("/jobs", response_model=JobListResponse)
@@ -245,7 +265,7 @@ def cancel_job(job_id: str) -> dict[str, str]:
     with job_lock(repository, job_id):
         record = _read_job_or_404(job_id)
         if record.status not in TERMINAL_STATUSES:
-            if record.status in {JobStatus.UPLOADING, JobStatus.QUEUED, JobStatus.AWAITING_REVIEW}:
+            if record.status in {JobStatus.UPLOADING, JobStatus.READY, JobStatus.QUEUED, JobStatus.AWAITING_REVIEW}:
                 record = repository.update_status(job_id, JobStatus.CANCELLED, message="사용자가 작업을 취소했습니다.")
             else:
                 record.metadata["cancel_requested"] = True

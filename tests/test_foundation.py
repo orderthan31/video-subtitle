@@ -40,7 +40,7 @@ class FoundationTests(unittest.IsolatedAsyncioTestCase):
             await self.upload.append_chunk(job_id=self.job.job_id, expected_offset=0, body=chunks(b"def"))
         await self.upload.append_chunk(job_id=self.job.job_id, expected_offset=3, body=chunks(b"def"))
         self.upload.complete(self.job.job_id)
-        self.assertEqual(self.repo.read(self.job.job_id).status, JobStatus.QUEUED)
+        self.assertEqual(self.repo.read(self.job.job_id).status, JobStatus.READY)
         self.assertEqual(self.repo.source_path(self.job).read_bytes(), b"abcdef")
         self.assertEqual(self.repo.read(self.job.job_id).options.target_language, "ko")
 

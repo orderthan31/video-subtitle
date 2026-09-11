@@ -196,7 +196,7 @@ def main():
             report["source_sha256"] = digest.hexdigest()
             report["stored_bytes"] = stored.stat().st_size
             checks_passed = (report["stored_sha256"] == report["source_sha256"] and report["stored_bytes"] == target
-                and report["completed"] == "queued" and report["interrupted_chunk_rolled_back"]
+                and report["completed"] == "ready" and report["interrupted_chunk_rolled_back"]
                 and report["restart_resumed_at"] == target // 2
                 and 0 < report["api_peak_bytes"] < 256 * 1024**2 and 0 < report["client_peak_bytes"] < 256 * 1024**2)
             request(client, "POST", f"/jobs/{job}/cancel")

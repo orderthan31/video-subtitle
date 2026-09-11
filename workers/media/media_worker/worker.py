@@ -302,7 +302,7 @@ class Worker:
                             self.repository.update_status(record.job_id, JobStatus.CANCELLED,
                                 message="업로드 보관 기간이 만료되었습니다.",
                                 metadata={"upload_expired_at": now.isoformat()})
-                    elif record.status != JobStatus.QUEUED:
+                    elif record.status not in {JobStatus.QUEUED, JobStatus.READY}:
                         self.cleanup(record.job_id)
                         self.repository.update_status(record.job_id, JobStatus.FAILED, error="Worker interrupted; upload again")
             except (JobBusyError, JobNotFoundError):
@@ -311,11 +311,18 @@ class Worker:
                 logging.exception("Collection deferred for job %s", record.job_id)
 
     def tick(self):
+        try:
+            with job_lock(self.repository, "f" * 32, "execution"):
+                self._tick_serial()
+        except JobBusyError:
+            return
+
+    def _tick_serial(self):
         if self.stop.is_set():
             return
         self.collect()
         jobs = self.repository.find_by_statuses([JobStatus.QUEUED])
-        for job in reversed(jobs):
+        for job in sorted(jobs, key=lambda item: (item.metadata.get("queued_at", item.created_at), item.job_id)):
             if self.stop.is_set():
                 return
             try:

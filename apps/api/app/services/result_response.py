@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 import re
+from pathlib import PurePosixPath
 
 from video_service.locking import download_lock
 from video_service.models import JobStatus
@@ -16,7 +17,12 @@ class ResultResponse(FileResponse):
         self.job_id = job_id
         self.filename = filename
         path = resolve_under(repository.storage_root, job_id, "output", filename)
-        super().__init__(path=path, filename=filename, media_type="text/plain" if filename.endswith(".smi") else None)
+        original = repository.read(job_id).original_filename.replace("\\", "/")
+        stem = PurePosixPath(original).stem
+        stem = re.sub(r'[\x00-\x1f\x7f<>:"/\\|?*]', "_", stem).strip(" .") or "video"
+        download_name = f"subtitle_{stem}.mp4" if filename == "final.mp4" else filename
+        super().__init__(path=path, filename=download_name, media_type="text/plain" if filename.endswith(".smi") else None)
+        self.filename = filename
 
     async def __call__(self, scope, receive, send):
         with download_lock(self.repository, self.job_id):

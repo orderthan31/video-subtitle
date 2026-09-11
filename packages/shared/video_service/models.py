@@ -13,6 +13,7 @@ def utc_now_iso() -> str:
 
 class JobStatus(StrEnum):
     UPLOADING = "UPLOADING"
+    READY = "READY"
     QUEUED = "QUEUED"
     ANALYZING = "ANALYZING"
     EXTRACTING_AUDIO = "EXTRACTING_AUDIO"

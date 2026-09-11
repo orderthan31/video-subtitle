@@ -106,6 +106,8 @@ class FilesystemJobRepository:
     ) -> JobRecord:
         record = self.read(job_id)
         record.status = status
+        if status == JobStatus.QUEUED:
+            record.metadata["queued_at"] = utc_now_iso()
         record.status_message = message
         record.error = error
         if metadata:

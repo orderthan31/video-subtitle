@@ -84,4 +84,4 @@ class UploadService:
 
         record.uploaded_bytes = uploaded
         self.repository.save(record)
-        self.repository.update_status(job_id, JobStatus.QUEUED, message="업로드 완료, 처리 대기 중")
+        self.repository.update_status(job_id, JobStatus.READY, message="업로드 완료, 실행 대기 중")

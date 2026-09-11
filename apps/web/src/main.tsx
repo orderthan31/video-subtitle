@@ -12,6 +12,7 @@ const labels: Record<string, string> = {UPLOADING:'업로드 중', QUEUED:'처�
 const terminal = (job: Job) => ['COMPLETED','FAILED','CANCELLED'].includes(job.status);
 labels.AWAITING_REVIEW = '자막 검토 대기';
 labels.UPLOADING = '업로드 미완료';
+labels.READY = '업로드 완료';
 const bytes = (n: number) => n >= 1024**3 ? `${(n/1024**3).toFixed(2)} GB` : `${(n/1024**2).toFixed(1)} MB`;
 const languageName = (code: string) => ({ko:'한국어',en:'영어',ja:'일본어',zh:'중국어',es:'스페인어'}[code] || code);
 
@@ -99,10 +100,10 @@ function App() {
     } catch(e) {setError(e instanceof Error ? e.message : '요청에 실패했습니다.');}
     finally {setPending('');}
   }
-  async function retry(job: Job) {
+  async function retry(job: Job, operation: 'retry'|'start' = 'retry') {
     setPending(job.job_id); setError('');
     try {
-      await request(`/jobs/${job.job_id}/retry`, {method:'POST'});
+      await request(`/jobs/${job.job_id}/${operation}`, {method:'POST'});
       await refresh();
     } catch (e) {setError(e instanceof Error ? e.message : '재시도에 실패했습니다.');}
     finally {setPending('');}
@@ -129,7 +130,7 @@ function App() {
           <label>오디오 필터<select value={audioFilter} disabled={busy||!!uploadId} onChange={e=>setAudioFilter(e.target.value)}><option value="off">끄기</option><option value="conservative">보수적 · 10초 이상 무음</option><option value="strong">강하게 · 5초 이상 무음</option></select></label>
           <div className="output-format"><span>결과 파일</span><strong>MP4 + SRT</strong></div>
           <label className="review-toggle"><input type="checkbox" checked={reviewSubtitles} disabled={busy||!!uploadId} onChange={e=>setReviewSubtitles(e.target.checked)}/>자막 검토 후 출력</label>
-          {busy ? <button className="primary" onClick={()=>controller.current?.abort()}><Pause size={18}/>업로드 일시정지</button> : <button className="primary" disabled={!file||!online} onClick={()=>void start()}>{uploadId?<Play size={18}/>:<Upload size={18}/>} {uploadId?'업로드 재개':'번역 시작'}</button>}
+          {busy ? <button className="primary" onClick={()=>controller.current?.abort()}><Pause size={18}/>업로드 일시정지</button> : <button className="primary" disabled={!file||!online} onClick={()=>void start()}>{uploadId?<Play size={18}/>:<Upload size={18}/>} {uploadId?'업로드 재개':'업로드'}</button>}
           {file && <div className="upload-progress"><progress value={progress} max={file.size}/><span>{bytes(progress)} / {bytes(file.size)}</span></div>}
         </div>
       </section>
@@ -142,6 +143,7 @@ function App() {
           {job.status==='COMPLETED'&&!job.metadata.results_expired_at&&job.metadata.result_files?.includes('translated.smi')&&<a className="download" href={`${base}/jobs/${job.job_id}/results/translated.smi`}><Download size={16}/>SMI</a>}
           {job.status==='COMPLETED'&&!job.metadata.results_expired_at&&!!job.additional_languages?.length&&<details className="extra-downloads"><summary role="button" aria-label="추가 자막"><Download size={16}/>추가 자막</summary><div>{job.additional_languages.map(language=><React.Fragment key={language}>{['srt','smi'].map(format=>{const filename=`translated.${language}.${format}`;return job.metadata.result_files?.includes(filename)&&<a key={format} className="download" href={`${base}/jobs/${job.job_id}/results/${filename}`}><Download size={16}/>{languageName(language)} {format.toUpperCase()}</a>;})}</React.Fragment>)}</div></details>}
           {job.status==='AWAITING_REVIEW'&&<button className="icon" title="자막 수정" onClick={()=>setReviewJob(job)}><Pencil size={18}/></button>}
+          {job.status==='READY'&&<button className="icon" title="처리 시작" disabled={!!pending} onClick={()=>void retry(job,'start')}><Play size={18}/></button>}
           {job.status==='UPLOADING'&&<button className="icon" disabled={busy} title="업로드 재개" onClick={()=>{setResumeId(job.job_id);setUploadId(job.job_id);setFile(null);setProgress(job.uploaded_bytes);setSource(job.source_language);setTarget(job.target_language);setQuality(job.quality_profile);setCodec(job.video_codec||'hevc');setSubtitleMode(job.subtitle_mode||'burn');setResolution(job.resolution||'original');setAdditionalLanguages(job.additional_languages||[]);setAudioFilter(job.audio_filter||'conservative');setReviewSubtitles(job.review_subtitles||false);}}><Play size={18}/></button>}
           {['FAILED','CANCELLED'].includes(job.status)&&<button className="icon" title="중단된 작업 재시도" disabled={pending===job.job_id} onClick={()=>void retry(job)}><RefreshCw size={18}/></button>}
           {terminal(job)?<button className="icon danger" title="작업 삭제" disabled={pending===job.job_id} onClick={()=>setConfirm(job)}><Trash2 size={18}/></button>:<button className="icon danger" title="작업 취소" disabled={busy||pending===job.job_id||!!job.metadata.cancel_requested} onClick={()=>void action(job,'cancel')}><X size={18}/></button>}
