@@ -63,7 +63,9 @@ class WorkerLifecycleTests(unittest.TestCase):
         worker = Worker(self.repo, provider)
         audio = self.repo.job_dir(self.job) / "work/audio.wav"
         metadata = {"duration": 14, "streams": [
-            {"codec_type": "video", "avg_frame_rate": "30/1"}, {"codec_type": "audio"}]}
+            {"codec_type": "video", "avg_frame_rate": "30/1", "width": 640, "height": 360,
+             "codec_name": "hevc", "codec_tag_string": "hvc1", "pix_fmt": "yuv420p"},
+            {"codec_type": "audio", "codec_name": "aac"}]}
         def encode(args, **kwargs):
             Path(args[-1]).write_bytes(b"output")
         with ExitStack() as stack:
@@ -73,7 +75,9 @@ class WorkerLifecycleTests(unittest.TestCase):
             stack.enter_context(patch("media_worker.worker.preprocess_audio", return_value=(audio,
                 build_timeline_from_kept_intervals([(12, 13)]))))
             stack.enter_context(patch("media_worker.worker.run_process", side_effect=encode))
+            decode = stack.enter_context(patch("media_worker.worker.validate_decodable"))
             worker.process(self.job)
+        decode.assert_called_once()
         record = self.repo.read(self.job)
         self.assertEqual(record.status, JobStatus.COMPLETED, record.error)
         output = self.repo.job_dir(self.job) / "output"

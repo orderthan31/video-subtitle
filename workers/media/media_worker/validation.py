@@ -1,0 +1,67 @@
+import math
+
+
+def validate_decodable(target, work, check):
+    from .media import executable
+    from .process import run_process
+
+    run_process([executable("ffmpeg"), "-nostdin", "-v", "error", "-xerror", "-i", target,
+        "-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"],
+        cwd=work, log_name="validate-decode.log", check=check)
+
+
+def validate_cues(cues, duration):
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("Invalid subtitle media duration")
+    previous_end = 0
+    if not cues:
+        raise ValueError("No speech subtitles detected")
+    for cue in cues:
+        if not (math.isfinite(cue.start) and math.isfinite(cue.end)
+                and 0 <= cue.start < cue.end <= duration + 0.05):
+            raise ValueError("Subtitle outside media timeline")
+        if cue.start < previous_end - 0.001:
+            raise ValueError("Subtitle cues overlap")
+        if not cue.text.strip() or len(cue.text.splitlines()) > 2:
+            raise ValueError("Invalid subtitle text layout")
+        previous_end = cue.end
+
+
+def display_dimensions(stream):
+    width, height = int(stream["width"]), int(stream["height"])
+    rotation = stream.get("tags", {}).get("rotate", 0)
+    for side_data in stream.get("side_data_list", []):
+        if "rotation" in side_data:
+            rotation = side_data["rotation"]
+            break
+    rotation = float(rotation) % 360
+    if not math.isfinite(rotation) or width <= 0 or height <= 0:
+        raise ValueError("Invalid source display geometry")
+    if math.isclose(rotation % 180, 90, abs_tol=0.01):
+        return height, width
+    if math.isclose(rotation % 180, 0, abs_tol=0.01):
+        return width, height
+    # Arbitrary-angle rotation can change the bounding box; do not guess it.
+    return None
+
+
+def validate_output(source, output, size):
+    videos = [s for s in output["streams"] if s["codec_type"] == "video"]
+    audios = [s for s in output["streams"] if s["codec_type"] == "audio"]
+    if size <= 0 or len(videos) != 1 or len(audios) != 1:
+        raise ValueError("Invalid output streams")
+    video, audio = videos[0], audios[0]
+    if video.get("codec_name") != "hevc" or video.get("codec_tag_string") != "hvc1":
+        raise ValueError("Output must be HEVC with hvc1 tag")
+    if video.get("pix_fmt") != "yuv420p" or audio.get("codec_name") != "aac":
+        raise ValueError("Output must use yuv420p video and AAC audio")
+    original_video = next(s for s in source["streams"] if s["codec_type"] == "video")
+    expected = display_dimensions(original_video)
+    actual = (int(video.get("width", 0)), int(video.get("height", 0)))
+    if min(actual) <= 0 or (expected is not None and actual != expected):
+        raise ValueError("Output resolution mismatch")
+    for metadata in (source, output):
+        if not math.isfinite(metadata["duration"]) or metadata["duration"] <= 0:
+            raise ValueError("Invalid output duration")
+    if abs(output["duration"] - source["duration"]) > max(1, source["duration"] * 0.01):
+        raise ValueError("Output duration mismatch")

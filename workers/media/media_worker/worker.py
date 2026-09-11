@@ -20,6 +20,7 @@ from .progress import encoding_progress
 from video_service.config import load_environment
 from video_service.capacity import assert_capacity, reserve_workspace
 from .shutdown import shutdown_signals, WorkerStopping
+from .validation import validate_cues, validate_output, validate_decodable
 
 
 class Worker:
@@ -125,6 +126,7 @@ class Worker:
                 write_json_atomic(work / "translated.json", [s.to_dict() for s in translated])
                 self.transition(job_id, JobStatus.GENERATING_SUBTITLE)
                 cues = segment_subtitles(translated, line_width=24 if record.options.target_language in {"ko", "ja", "zh"} else 42)
+                validate_cues(cues, metadata["duration"])
                 srt = segments_to_srt(cues)
                 if not srt.strip():
                     raise ValueError("No speech subtitles detected")
@@ -133,6 +135,7 @@ class Worker:
                 (output / "translated.srt").write_text(srt, encoding="utf-8")
                 original_cues = segment_subtitles(segments,
                     line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
+                validate_cues(original_cues, metadata["duration"])
                 (output / "original.srt").write_text(segments_to_srt(original_cues), encoding="utf-8")
                 (work / "translated.srt").write_text(srt, encoding="utf-8")
                 self.transition(job_id, JobStatus.ENCODING, message="인코딩 슬롯 대기 중")
@@ -147,11 +150,8 @@ class Worker:
                     progress_path = None
                 self.transition(job_id, JobStatus.VALIDATING)
                 final = probe(target, work, check)
-                kinds = {s["codec_type"] for s in final["streams"]}
-                if not {"video", "audio"}.issubset(kinds) or not target.stat().st_size:
-                    raise ValueError("Invalid output streams")
-                if abs(final["duration"] - metadata["duration"]) > max(1, metadata["duration"] * 0.01):
-                    raise ValueError("Output duration mismatch")
+                validate_output(metadata, final, target.stat().st_size)
+                validate_decodable(target, work, check)
                 self.transition(job_id, JobStatus.CLEANING)
                 size = target.stat().st_size
                 self.cleanup(job_id, keep_output=True)
