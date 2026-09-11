@@ -38,7 +38,36 @@ def job_lock(repository, job_id, scope="state"):
     directory = repository.storage_root / ".locks"
     directory.mkdir(exist_ok=True)
     with _file_lock(directory / f"{job_id}.{scope}.lock"):
+        if scope == "execution":
+            # Registration is serialized by this lock; abandoned leases are reclaimable.
+            for lease in directory.glob(f"{job_id}.download.*.lock"):
+                with _file_lock(lease):
+                    pass
+                lease.unlink(missing_ok=True)
         yield
+
+
+@contextmanager
+def download_lock(repository, job_id):
+    """Allow concurrent readers while excluding execution, deletion and collection."""
+    from uuid import uuid4
+
+    repository.job_dir(job_id)
+    directory = repository.storage_root / ".locks"
+    directory.mkdir(exist_ok=True)
+    lease = directory / f"{job_id}.download.{uuid4().hex}.lock"
+    try:
+        with ExitStack() as reader:
+            # Register under the raw execution lock without excluding existing readers.
+            with _file_lock(directory / f"{job_id}.execution.lock"):
+                reader.enter_context(_file_lock(lease))
+            yield
+    finally:
+        try:
+            lease.unlink(missing_ok=True)
+        except PermissionError:
+            # A collector may briefly have the released lease open on Windows.
+            pass
 
 
 @contextmanager

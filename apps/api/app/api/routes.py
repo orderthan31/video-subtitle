@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from functools import partial
 import hashlib
 
@@ -19,10 +18,10 @@ from app.schemas.jobs import (
 )
 from app.services.storage_guard import StorageGuard, StorageLimitError
 from app.services.upload_service import UploadConflictError, UploadService
+from app.services.result_response import ResultResponse
 from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
-from video_service.storage import resolve_under
 from video_service.capacity import assert_capacity
 
 router = APIRouter(prefix="/api")
@@ -190,13 +189,5 @@ def delete_job(job_id: str) -> None:
 
 @router.get("/jobs/{job_id}/results/{filename}")
 def download_result(job_id: str, filename: str) -> FileResponse:
-    record = _read_job_or_404(job_id)
-    if record.status != JobStatus.COMPLETED:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="아직 완료되지 않은 Job입니다.")
-    if filename not in {"final.mp4", "translated.srt"}:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="결과 파일을 찾을 수 없습니다.")
-
-    path = resolve_under(settings.storage_root, job_id, "output", filename)
-    if not Path(path).exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="결과 파일을 찾을 수 없습니다.")
-    return FileResponse(path=path, filename=filename)
+    _read_job_or_404(job_id)
+    return ResultResponse(repository, job_id, filename)
