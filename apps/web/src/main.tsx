@@ -1,7 +1,8 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Captions, Upload, FileVideo, Download, Trash2, X, Pause, Play, RefreshCw, Check, Clock, Pencil} from 'lucide-react';
-import {base, Job, request, resumeUpload} from './api';
+import {base, Job, request, resumeUpload, uploadRequest} from './api';
+import {abortable} from './abortable';
 import './styles.css';
 import {StageProgress} from './StageProgress';
 import {SubtitleEditor} from './SubtitleEditor';
@@ -10,6 +11,7 @@ import {AccountMenu, AuthGate} from './AuthGate';
 const labels: Record<string, string> = {UPLOADING:'업로드 중', QUEUED:'처리 대기', ANALYZING:'영상 분석', EXTRACTING_AUDIO:'오디오 추출', PREPROCESSING_AUDIO:'음성 전처리', TRANSCRIBING:'음성 전사', FILTERING_TRANSCRIPT:'전사 정리', TRANSLATING:'번역', GENERATING_SUBTITLE:'자막 생성', ENCODING:'영상 출력', VALIDATING:'결과 검증', CLEANING:'파일 정리', COMPLETED:'완료', FAILED:'실패', CANCELLED:'취소됨'};
 const terminal = (job: Job) => ['COMPLETED','FAILED','CANCELLED'].includes(job.status);
 labels.AWAITING_REVIEW = '자막 검토 대기';
+labels.UPLOADING = '업로드 미완료';
 const bytes = (n: number) => n >= 1024**3 ? `${(n/1024**3).toFixed(2)} GB` : `${(n/1024**2).toFixed(1)} MB`;
 const languageName = (code: string) => ({ko:'한국어',en:'영어',ja:'일본어',zh:'중국어',es:'스페인어'}[code] || code);
 
@@ -33,6 +35,24 @@ function App() {
     catch { setOnline(false); }
   }
   useEffect(() => { void refresh(); const timer = setInterval(refresh, 2500); return () => {clearInterval(timer); controller.current?.abort();}; }, []);
+  useEffect(() => {
+    const pause = () => {
+      if (active.current) {
+        controller.current?.abort();
+        setError('화면 전환으로 업로드가 일시정지되었습니다.');
+      }
+    };
+    const visibility = () => {
+      if (document.visibilityState === 'hidden') pause();
+      else void refresh();
+    };
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('pagehide', pause);
+    return () => {
+      document.removeEventListener('visibilitychange', visibility);
+      window.removeEventListener('pagehide', pause);
+    };
+  }, []);
   useEffect(() => {
     if (!file) { setPreview(''); return; }
     const url = URL.createObjectURL(file); setPreview(url); return () => URL.revokeObjectURL(url);
@@ -59,13 +79,15 @@ function App() {
         if (creationRequest.current?.signature !== signature) {
           creationRequest.current = {signature, key:crypto.randomUUID()};
         }
-        const created = await request<{job_id: string}>('/uploads', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload,request_id:creationRequest.current.key})});
+        const created = await uploadRequest<{job_id: string}>('/uploads', {method:'POST', signal:abort.signal, headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload,request_id:creationRequest.current.key})});
         id = created.job_id; setUploadId(id);
       }
-      await resumeUpload(file,id,abort.signal,setProgress);
+      await abortable(signal => resumeUpload(file,id,signal,n => {
+        if (!abort.signal.aborted) setProgress(n);
+      }), abort.signal, 0);
       if (!abort.signal.aborted) {setFile(null);setUploadId('');setResumeId('');}
-      await refresh();
-    } catch (e) { setError(e instanceof Error ? e.message : '업로드에 실패했습니다.'); }
+      void refresh();
+    } catch (e) { if (!abort.signal.aborted) setError(e instanceof Error ? e.message : '업로드에 실패했습니다.'); }
     finally {active.current=false;setBusy(false);controller.current=null;}
   }
   async function action(job: Job, operation: 'cancel'|'delete') {
