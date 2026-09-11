@@ -66,3 +66,10 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 키는 Worker 환경에만 전달하고 빌드 컨텍스트에서는 `.env`와 실행 데이터를 제외한다.
 
 GPU 설정 근거: [Docker 공식 GPU Compose 문서](https://docs.docker.com/compose/how-tos/gpu-support/).
+## Worker 종료 정책
+
+Worker는 SIGTERM, SIGINT 및 Windows SIGBREAK를 받으면 새 작업을 시작하지 않는다. 현재 작업의 FFmpeg 자식 프로세스를 종료하고 종료를 기다리며, 진행 중 Gemini 요청은 로컬 요청 태스크를 취소·회수한다. 이미 원격 서비스가 수행한 처리나 과금까지 취소됨을 보장하지는 않는다.
+
+처리 중이던 작업은 `FAILED`, `metadata.interrupted=true`, `Worker shutting down; upload again`을 기록한 뒤 미디어를 정리한다. 아직 시작하지 않은 `QUEUED` 작업은 입력 파일과 함께 보존한다. 사용자가 취소 요청도 보낸 작업은 `CANCELLED`가 우선한다. 파일 정리가 실패하면 다음 GC에서 재시도한다.
+
+Compose의 Worker 종료 유예는 60초다. 파일시스템 응답 정지나 강제 종료(SIGKILL, Windows 강제 프로세스 종료)는 정상 정리를 보장하지 못하므로 다음 Worker 실행의 복구 GC가 필요하다. 실제 Docker 환경의 종료 테스트는 아직 수행하지 않았다.

@@ -22,7 +22,7 @@ services:
     init: true
     restart: unless-stopped
     command: ["python", "-m", "media_worker.worker"]
-    stop_grace_period: 30s
+    stop_grace_period: 60s
     environment:
       <<: *storage
       GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in the root .env}

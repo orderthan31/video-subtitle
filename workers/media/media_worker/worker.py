@@ -3,6 +3,7 @@ import logging
 import os
 from pathlib import Path
 import time
+from threading import Event
 
 from video_service.locking import job_lock, JobBusyError, encoding_slot, wait_for_job_lock
 from video_service.models import JobStatus, TERMINAL_STATUSES
@@ -18,15 +19,22 @@ from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
 from video_service.capacity import assert_capacity
+from .shutdown import shutdown_signals, WorkerStopping
 
 
 class Worker:
-    def __init__(self, repository, provider):
+    def __init__(self, repository, provider, stop=None):
         self.repository = repository
         self.provider = provider
+        self.stop = stop if stop is not None else Event()
+
+    def check_stopping(self):
+        if self.stop.is_set():
+            raise WorkerStopping()
 
     def transition(self, job_id, status, **kwargs):
         def check_cancel():
+            self.check_stopping()
             record = self.repository.read(job_id)
             if record.metadata.get("cancel_requested") or record.status == JobStatus.CANCELLED:
                 raise Cancelled()
@@ -49,6 +57,8 @@ class Worker:
         repo = self.repository
         with job_lock(repo, job_id, "execution"):
             with job_lock(repo, job_id):
+                if self.stop.is_set():
+                    return
                 record = repo.read(job_id)
                 if record.status != JobStatus.QUEUED:
                     return
@@ -60,6 +70,7 @@ class Worker:
 
             def check():
                 nonlocal last_heartbeat, last_progress
+                self.check_stopping()
                 current = repo.read(job_id)
                 if current.metadata.get("cancel_requested") or current.status == JobStatus.CANCELLED:
                     raise Cancelled()
@@ -152,14 +163,19 @@ class Worker:
                     cancelled = cancelled or current.metadata.get("cancel_requested", False)
                     repo.update_status(job_id, JobStatus.CANCELLED if cancelled else JobStatus.FAILED,
                         error=None if cancelled else str(exc), metadata={"stage_progress": None,
+                            "interrupted": isinstance(exc, WorkerStopping),
                             "cleanup_pending": cleanup_error is not None, "cleanup_error": cleanup_error})
                 if isinstance(exc, KeyboardInterrupt):
                     raise
 
     def collect(self):
+        if self.stop.is_set():
+            return
         collect_orphans(self.repository, grace_seconds=float(os.getenv("ORPHAN_GRACE_HOURS", "2")) * 3600)
         now = datetime.now(timezone.utc)
         for record in self.repository.list():
+            if self.stop.is_set():
+                return
             try:
                 with job_lock(self.repository, record.job_id, "execution"), job_lock(self.repository, record.job_id):
                     record = self.repository.read(record.job_id)
@@ -183,13 +199,28 @@ class Worker:
                 logging.exception("Collection deferred for job %s", record.job_id)
 
     def tick(self):
+        if self.stop.is_set():
+            return
         self.collect()
         jobs = self.repository.find_by_statuses([JobStatus.QUEUED])
         for job in reversed(jobs):
+            if self.stop.is_set():
+                return
             try:
                 self.process(job.job_id)
             except (JobBusyError, JobNotFoundError):
                 continue
+
+    def run(self, poll_interval=5):
+        while not self.stop.is_set():
+            try:
+                self.tick()
+                self.stop.wait(poll_interval)
+            except KeyboardInterrupt:
+                self.stop.set()
+            except Exception:
+                logging.exception("Worker iteration failed")
+                self.stop.wait(5)
 
 
 def main():
@@ -197,15 +228,8 @@ def main():
     logging.basicConfig(level=logging.INFO)
     repo = FilesystemJobRepository(Path(os.getenv("VIDEO_STORAGE_ROOT", "data/video-jobs")).resolve())
     worker = Worker(repo, GeminiProvider())
-    while True:
-        try:
-            worker.tick()
-            time.sleep(float(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "5")))
-        except KeyboardInterrupt:
-            break
-        except Exception:
-            logging.exception("Worker iteration failed")
-            time.sleep(5)
+    with shutdown_signals(worker.stop):
+        worker.run(float(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "5")))
 
 
 if __name__ == "__main__":
