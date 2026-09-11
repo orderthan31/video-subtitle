@@ -1,4 +1,4 @@
-"""Bounded, refill-on-completion transcription with durable per-window results."""
+"""Bounded Gemini segment execution with durable results and stop-and-drain."""
 import asyncio
 from collections import deque
 import time
@@ -22,8 +22,15 @@ class PartialTranscriptionError(RuntimeError):
         self.prefix = []
 
 
-async def run_transcription_queue(count, operation, check, progress, *, path=None, before_write=None,
-                                  validate=lambda index, result: result, concurrency=3, attempts=3):
+class PartialTranslationError(PartialTranscriptionError):
+    def __init__(self, results, failed):
+        super().__init__(results, failed)
+        self.args = (f"Translation stopped at batch(es) {', '.join(str(i + 1) for i in failed)}; retry to resume.",)
+
+
+async def run_segment_queue(count, operation, check, progress, *, path=None, before_write=None,
+                            validate=lambda index, result: result, concurrency=3, attempts=3,
+                            failure_type=PartialTranscriptionError):
     results = {}
     history = []
     if path is not None:
@@ -114,9 +121,12 @@ async def run_transcription_queue(count, operation, check, progress, *, path=Non
             if done:
                 publish()
         if failed:
-            raise PartialTranscriptionError(results, sorted(failed))
+            raise failure_type(results, sorted(failed))
         return results
     finally:
         for task in running:
             task.cancel()
         await asyncio.gather(*running, return_exceptions=True)
+
+
+run_transcription_queue = run_segment_queue

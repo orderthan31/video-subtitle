@@ -102,7 +102,7 @@ class WorkerLifecycleTests(unittest.TestCase):
         provider.detect_vocalizations.return_value = {"removals": [{"start": 2.3, "end": 2.7, "kind": "breath"}],
             "protected": [{"start": 12, "end": 13}]}
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Original speech.")]
-        provider.translate.side_effect = lambda segments, language, check: [s.with_text(f"Translated speech. {language}") for s in segments]
+        provider.translate.side_effect = lambda segments, language, check, **kwargs: [s.with_text(f"Translated speech. {language}") for s in segments]
         worker = Worker(self.repo, provider)
         audio = self.repo.job_dir(self.job) / "work/audio.wav"
         audio.write_bytes(b"audio")

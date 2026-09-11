@@ -21,7 +21,7 @@ from .providers import GeminiProvider
 from .llm_trace import capture_calls
 from .checkpoints import Checkpoints
 from .sentence_transcription import transcription_prompt
-from .transcription_queue import PartialTranscriptionError
+from .transcription_queue import PartialTranscriptionError, PartialTranslationError
 from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
@@ -193,9 +193,25 @@ class Worker:
                         line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)}
                     for index, language in enumerate(languages):
                         check()
-                        translated = [TranscriptSegment.from_dict(item) for item in checkpoints.run("translate-" + language,
-                            lambda: [s.to_dict() for s in self.provider.translate(segments, language, check)])]
                         stem = "translated" if index == 0 else f"translated.{language}"
+                        def translation_progress(value):
+                            with wait_for_job_lock(repo, job_id, check=check):
+                                current = repo.read(job_id)
+                                current.metadata["translation_progress"] = {**value, "language": language}
+                                current.metadata["stage_progress"] = value["completed"] / value["total"] if value["total"] else 1
+                                current.status_message = "진행 중 번역 요청 회수 중" if value["draining"] else "자막 번역 중"
+                                repo.save(current)
+                        try:
+                            translated = [TranscriptSegment.from_dict(item) for item in checkpoints.run("translate-parallel-40-v1-" + language,
+                                lambda: [s.to_dict() for s in self.provider.translate(segments, language, check,
+                                    work=work, progress=translation_progress)])]
+                        except PartialTranslationError as exc:
+                            write_json_atomic(work / f"partial-{stem}.json", {"incomplete": True,
+                                "failed_batches": [i + 1 for i in exc.failed],
+                                "segments": [s.to_dict() for s in exc.segments]})
+                            cues = segment_subtitles(exc.prefix, line_width=24 if language.split("-")[0] in {"ko", "ja", "zh"} else 42)
+                            (work / f"partial-{stem}.srt").write_text(segments_to_srt(cues), encoding="utf-8")
+                            raise
                         write_json_atomic(work / f"{stem}.json", [s.to_dict() for s in translated])
                         subtitle_sets[stem] = segment_subtitles(translated,
                             line_width=24 if language.split("-")[0] in {"ko", "ja", "zh"} else 42)
