@@ -90,6 +90,31 @@ class SubtitleReviewTests(unittest.TestCase):
         with job_lock(self.repo, self.job, "execution"):
             self.assertEqual(self.client.put(self.url, json={"revision": 1, "tracks": self.tracks}).status_code, 409)
 
+    def test_capacity_rejection_preserves_draft_revision_and_review_status(self):
+        from video_service.capacity import StorageLimitError
+        before = self.client.get(self.url).json()
+        with patch.object(routes, "assert_capacity", side_effect=StorageLimitError("quota")) as capacity:
+            response = self.client.put(self.url, json={"revision": 1, "tracks": self.tracks, "action": "render"})
+        self.assertEqual(response.status_code, 507)
+        self.assertGreater(capacity.call_args.kwargs["additional"], 0)
+        self.assertEqual(self.client.get(self.url).json(), before)
+        self.assertEqual(self.repo.read(self.job).status, JobStatus.AWAITING_REVIEW)
+        self.assertFalse((self.repo.job_dir(self.job) / "work/subtitle-draft.json.tmp").exists())
+
+    def test_admission_lock_blocks_draft_write(self):
+        with job_lock(self.repo, "0" * 32):
+            response = self.client.put(self.url, json={"revision": 1, "tracks": self.tracks})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.client.get(self.url).json()["revision"], 1)
+
+    def test_disk_full_during_write_returns_507_without_approval(self):
+        import errno
+        with patch("video_service.storage.Path.write_bytes", side_effect=OSError(errno.ENOSPC, "full")):
+            response = self.client.put(self.url, json={"revision": 1, "tracks": self.tracks, "action": "render"})
+        self.assertEqual(response.status_code, 507)
+        self.assertEqual(self.client.get(self.url).json()["revision"], 1)
+        self.assertEqual(self.repo.read(self.job).status, JobStatus.AWAITING_REVIEW)
+
     def test_long_edited_text_uses_existing_readable_layout(self):
         tracks = deepcopy(self.tracks)
         tracks["translated"][0]["text"] = "가" * 100

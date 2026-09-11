@@ -141,8 +141,12 @@ class Worker:
                         subtitle_sets[stem] = segment_subtitles(translated,
                             line_width=24 if language.split("-")[0] in {"ko", "ja", "zh"} else 42)
                     if record.options.review_subtitles:
-                        write_draft(repo, record, {name: [cue.to_dict() for cue in cues]
-                            for name, cues in subtitle_sets.items()}, metadata["duration"], 1)
+                        with wait_for_job_lock(repo, "0" * 32, check=check):
+                            write_draft(repo, record, {name: [cue.to_dict() for cue in cues]
+                                for name, cues in subtitle_sets.items()}, metadata["duration"], 1,
+                                capacity_check=lambda size: assert_capacity(repo.storage_root,
+                                    int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
+                                    int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size))
                         self.transition(job_id, JobStatus.AWAITING_REVIEW,
                             metadata={"awaiting_review_at": utc_now_iso()})
                         return

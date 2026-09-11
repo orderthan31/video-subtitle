@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import partial
 import hashlib
+import errno
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
@@ -207,7 +208,16 @@ def update_subtitle_draft(job_id: str, payload: SubtitleUpdate):
             raise HTTPException(status_code=409, detail="다른 창에서 자막이 변경되었습니다. 최신 자막을 다시 불러오세요.")
         tracks = {name: [cue.model_dump(exclude_none=True) for cue in cues] for name, cues in payload.tracks.items()}
         try:
-            draft = write_draft(repository, record, tracks, current["duration"], current["revision"] + 1)
+            with job_lock(repository, "0" * 32):
+                draft = write_draft(repository, record, tracks, current["duration"], current["revision"] + 1,
+                    capacity_check=lambda size: assert_capacity(repository.storage_root,
+                        settings.service_quota_bytes, settings.min_free_space_bytes, additional=size))
+        except StorageLimitError as exc:
+            raise HTTPException(status_code=507, detail=str(exc)) from exc
+        except OSError as exc:
+            if exc.errno == errno.ENOSPC or getattr(exc, "winerror", None) == 112:
+                raise HTTPException(status_code=507, detail="초안을 저장할 디스크 공간이 부족합니다.") from exc
+            raise
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if payload.action == "render":

@@ -24,13 +24,21 @@ def read_json(path: Path) -> dict[str, Any]:
         return json.load(file)
 
 
-def write_json_atomic(path: Path, data: dict[str, Any] | list[Any]) -> None:
+def write_json_atomic(path: Path, data: dict[str, Any] | list[Any], *, before_write=None) -> None:
+    payload = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    if before_write is not None:
+        before_write(len(payload))
     ensure_dir(path.parent)
     temp_path = path.with_name(f"{path.name}.tmp")
-    with temp_path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
-        file.write("\n")
-    temp_path.replace(path)
+    try:
+        temp_path.write_bytes(payload)
+        temp_path.replace(path)
+    except BaseException:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def remove_path_inside(root: Path, path: Path) -> None:
