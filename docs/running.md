@@ -24,7 +24,7 @@ cd ../..
 ```
 
 루트 `.env`에 `GEMINI_API_KEY`를 설정한다. 공유용 `.env.example`에는 실제 키를 넣지 않는다.
-전사는 `GEMINI_TRANSCRIPTION_MODEL=gemini-3.5-transcribe`, 번역은
+전사는 `GEMINI_TRANSCRIPTION_MODEL=gemini-3.8-flash`, 번역은
 `GEMINI_TRANSLATION_MODEL=gemini-3.8-flash`를 사용한다.
 
 각각 별도 터미널에서 실행한다.

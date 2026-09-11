@@ -19,13 +19,14 @@ from video_service.transcript import TranscriptSegment
 from video_service.config import load_environment
 from video_service.timeline import identity_timeline
 from .llm_trace import begin_call, finish_call, audio_window, cached_result
+from .sentence_transcription import SCHEMA as SENTENCE_SCHEMA, transcription_prompt, validate_sentences
 
 
 class GeminiProvider:
     def __init__(self):
         load_environment()
         self.key = os.getenv("GEMINI_API_KEY", "")
-        self.transcription_model = os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-3.5-transcribe")
+        self.transcription_model = os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-3.8-flash")
         self.translation_model = os.getenv("GEMINI_TRANSLATION_MODEL", "gemini-3.8-flash")
         self.audio_filter_model = os.getenv("GEMINI_AUDIO_FILTER_MODEL", self.translation_model)
         if not self.key or not all(re.fullmatch(r"[a-zA-Z0-9_.-]+", model) for model in (self.transcription_model, self.translation_model, self.audio_filter_model)):
@@ -129,7 +130,7 @@ class GeminiProvider:
     def transcribe_window(self, audio, left, right, language, check, depth=0):
         audio.setpos(left)
         digest = hashlib.sha256(audio.readframes(right - left)).hexdigest()
-        identity = ["word-window-v1", self.transcription_model, language,
+        identity = ["sentence-window-v1", self.transcription_model, transcription_prompt(language, (right - left) / audio.getframerate()),
             audio.getframerate(), audio.getnchannels(), audio.getsampwidth(), digest]
         return cached_result(identity, lambda: self._transcribe_window(audio, left, right, language, check, depth))
 
@@ -140,53 +141,30 @@ class GeminiProvider:
         with wave.open(buffer, "wb") as chunk:
             chunk.setparams(audio.getparams())
             chunk.writeframes(audio.readframes(right - left))
-        code = {"en": "en-US", "ko": "ko-KR", "ja": "ja-JP", "zh": "cmn-Hans-CN", "es": "es-419"}.get(language, language)
-        try:
-            with audio_window(left, right, rate, depth):
-                items = self.request([{"inlineData": {"mimeType": "audio/wav",
-                    "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}], None, check, self.transcription_model,
-                    {"wordTimestamp": True, "mode": "VERBATIM", "languageCodes": [] if language == "auto" else [code]})
-            for item in items:
-                if not (math.isfinite(item["start"]) and math.isfinite(item["end"])
-                        and 0 <= item["start"] < item["end"] <= (right - left) / rate + 0.1):
-                    raise WordTimestampError("STT returned invalid timestamps for audio window")
-            return items
-        except WordTimestampError:
-            if depth >= 3 or right - left <= 8 * rate:
-                raise
+        duration = (right - left) / rate
+        for attempt in range(2):
             check()
-            middle = (left + right) // 2
-            logging.warning("Splitting invalid STT window at %.3fs (duration %.3fs, depth %d)",
-                middle / rate, (right - left) / rate, depth + 1)
-            result = []
-            # Overlap supplies speech context; midpoint ownership avoids duplicate words.
-            for start, end, owner_start, owner_end in (
-                (left, min(right, middle + rate), left, middle),
-                (max(left, middle - rate), right, middle, right),
-            ):
-                check()
-                for item in self.transcribe_window(audio, start, end, language, check, depth + 1):
-                    word_start = start + item["start"] * rate
-                    word_end = min(start + item["end"] * rate, right)
-                    if owner_start <= (word_start + word_end) / 2 < owner_end and word_start < word_end:
-                        result.append({**item, "start": (word_start - left) / rate, "end": (word_end - left) / rate})
-            return sorted(result, key=lambda item: item["start"])
+            try:
+                with audio_window(left, right, rate, depth):
+                    items = self.request([{"text": transcription_prompt(language, duration)},
+                        {"inlineData": {"mimeType": "audio/wav",
+                            "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}],
+                        SENTENCE_SCHEMA, check, self.transcription_model)
+                return validate_sentences(items, duration)
+            except ValueError:
+                if attempt == 1:
+                    raise
+                logging.warning("Retrying malformed sentence transcription once")
 
     def transcribe(self, source, language, check, *, spans=None):
         result = []
-        region_words = []
-        current_region = None
         with wave.open(str(source), "rb") as audio:
             rate = audio.getframerate()
             total = audio.getnframes()
-            # Context overlap stays inside each retained audio region.
+            # Non-overlapping clips avoid duplicating whole sentences at context boundaries.
             regions = identity_timeline(total / rate) if spans is None else spans
-            for first, left, right, span in transcription_windows(total, rate, regions):
+            for first, left, right, span in transcription_windows(total, rate, regions, context_seconds=0):
                 check()
-                if span != current_region:
-                    result.extend(TranscriptSegment.from_dict(item) for item in group_transcription_words(region_words))
-                    region_words = []
-                    current_region = span
                 items = self.transcribe_window(audio, left, right, language, check)
                 for item in items:
                     segment = TranscriptSegment.from_dict(item)
@@ -200,8 +178,7 @@ class GeminiProvider:
                     middle = (start + end) / 2
                     owner_start = span.processed_start + (first - region_first) / rate
                     if start < end and owner_start <= middle < min(span.processed_end, owner_start + 60):
-                        region_words.append(segment.with_times(start, end).to_dict())
-        result.extend(TranscriptSegment.from_dict(item) for item in group_transcription_words(region_words))
+                        result.append(segment.with_times(start, end))
         return sorted(result, key=lambda segment: segment.start)
 
     def translate(self, segments, language, check):
@@ -251,7 +228,7 @@ async def wait_for_retry(delay, check):
     check()
 
 
-def transcription_windows(total, rate, spans):
+def transcription_windows(total, rate, spans, *, context_seconds=1):
     regions = []
     previous = 0.0
     for span in spans:
@@ -268,7 +245,7 @@ def transcription_windows(total, rate, spans):
         raise ValueError("Transcription timeline does not cover audio")
     for start, end, span in regions:
         for first in range(start, end, rate * 60):
-            yield first, max(start, first - rate), min(end, first + rate * 61), span
+            yield first, max(start, first - rate * context_seconds), min(end, first + rate * (60 + context_seconds)), span
 
 
 class WordTimestampError(ValueError):

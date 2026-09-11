@@ -30,29 +30,27 @@ class TranscriptionTests(unittest.TestCase):
         provider.transcription_model = "test-model"
         return provider, audio
 
-    def test_invalid_window_is_split_with_context_and_exact_word_ownership(self):
+    def test_invalid_sentence_window_retries_once_without_word_splitting(self):
         provider, audio = self.window_fixture()
-        provider.request = Mock(side_effect=[WordTimestampError("reversed interval"),
-            [{"start": 9.5, "end": 9.8, "text": "Keep"},
-             {"start": 10.1, "end": 10.4, "text": "both."}],
-            [{"start": 0.5, "end": 0.8, "text": "Keep"},
-             {"start": 1.1, "end": 1.4, "text": "both."}]])
+        provider.request = Mock(side_effect=[[{"start": 4, "end": 3, "text": "Bad timing."}],
+            [{"start": 9.5, "end": 10.4, "text": "Keep both."}]])
         result = provider.transcribe_window(audio, 0, 2000, "en", lambda: None)
-        self.assertEqual([word["text"] for word in result], ["Keep", "both."])
+        self.assertEqual([word["text"] for word in result], ["Keep both."])
         self.assertAlmostEqual(result[0]["start"], 9.5)
-        self.assertAlmostEqual(result[1]["end"], 10.4)
+        self.assertAlmostEqual(result[0]["end"], 10.4)
         durations = []
         for call in provider.request.call_args_list:
-            with wave.open(io.BytesIO(base64.b64decode(call.args[0][0]["inlineData"]["data"]))) as chunk:
+            with wave.open(io.BytesIO(base64.b64decode(call.args[0][1]["inlineData"]["data"]))) as chunk:
                 durations.append(chunk.getnframes() / chunk.getframerate())
-        self.assertEqual(durations, [20, 11, 11])
+        self.assertEqual(durations, [20, 20])
+        self.assertEqual(len(provider.request.call_args.args), 4)
 
-    def test_persistent_bad_windows_have_bounded_subdivision(self):
+    def test_persistent_bad_sentences_have_bounded_retries(self):
         provider, audio = self.window_fixture(61)
         provider.request = Mock(side_effect=WordTimestampError("reversed interval"))
         with self.assertRaises(WordTimestampError):
             provider.transcribe_window(audio, 0, 6100, "en", lambda: None)
-        self.assertEqual(provider.request.call_count, 4)
+        self.assertEqual(provider.request.call_count, 2)
 
     def test_auth_failure_does_not_trigger_subdivision(self):
         provider, audio = self.window_fixture()
@@ -105,7 +103,7 @@ class TranscriptionTests(unittest.TestCase):
         frames = []
 
         def request(parts, *args):
-            with wave.open(io.BytesIO(base64.b64decode(parts[0]["inlineData"]["data"]))) as chunk:
+            with wave.open(io.BytesIO(base64.b64decode(parts[1]["inlineData"]["data"]))) as chunk:
                 frames.append(chunk.readframes(chunk.getnframes()))
             # Model rounding can extend slightly past the submitted audio.
             return [{"start": 0, "end": 1.05, "text": "Speech"}]
@@ -119,7 +117,7 @@ class TranscriptionTests(unittest.TestCase):
         self.assertEqual(frames, [b"\x01\x00" * 100, b"\x02\x00" * 100])
         self.assertEqual([map_segment_to_original(s.start, s.end, spans) for s in segments],
             [(0, 1), (21, 22)])
-        self.assertEqual(check.call_count, 2)
+        self.assertEqual(check.call_count, 4)
 
     def test_empty_audio_has_no_requests(self):
         self.assertEqual(list(transcription_windows(0, 100, [])), [])
@@ -138,7 +136,7 @@ class TranscriptionTests(unittest.TestCase):
             words = asyncio.run(provider._request([], None, lambda: None, "test-model", {"wordTimestamp": True}))
         self.assertEqual([word["text"] for word in words], ["Hello", "world."])
 
-    def test_sentence_crossing_sixty_seconds_keeps_each_word_once(self):
+    def test_sentence_clips_restore_time_without_duplicated_context(self):
         folder = ROOT / "data/test-runs" / uuid.uuid4().hex
         folder.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, folder)
@@ -148,18 +146,15 @@ class TranscriptionTests(unittest.TestCase):
             audio.writeframes(bytes(63 * 100 * 2))
         provider = GeminiProvider.__new__(GeminiProvider)
         provider.transcription_model = "test-model"
-        # The second request starts at 59s and repeats context from the first.
-        first = [{"start": 58.8, "end": 59.2, "text": "We"},
-            {"start": 59.4, "end": 59.8, "text": "keep"},
-            {"start": 60.1, "end": 60.4, "text": "every"},
-            {"start": 60.6, "end": 60.9, "text": "word."}]
-        second = [{**word, "start": word["start"] - 59, "end": word["end"] - 59} for word in first[1:]]
+        first = [{"start": 58.8, "end": 59.8, "text": "We keep"}]
+        second = [{"start": 0.1, "end": 0.9, "text": "every word."}]
         provider.request = Mock(side_effect=[first, second])
         result = provider.transcribe(source, "en", lambda: None)
         self.assertEqual(provider.request.call_count, 2)
-        self.assertEqual([segment.text for segment in result], ["We keep every word."])
+        self.assertEqual([segment.text for segment in result], ["We keep", "every word."])
         self.assertAlmostEqual(result[0].start, 58.8)
-        self.assertAlmostEqual(result[0].end, 60.9)
+        self.assertAlmostEqual(result[1].start, 60.1)
+        self.assertAlmostEqual(result[1].end, 60.9)
 
     def test_raw_words_keep_intentional_repetition(self):
         parts = [{"audioTranscription": {"words": [

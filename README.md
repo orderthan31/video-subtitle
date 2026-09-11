@@ -51,7 +51,7 @@ API 문서: http://localhost:8000/docs
 .\.venv\Scripts\python -m unittest discover -s tests -v
 ```
 
-API와 Worker는 루트 `.env`를 읽습니다. 기존 프로세스 환경변수가 우선합니다. `.env.example`은 키가 없는 공유용 예시입니다. 전사 모델은 `gemini-3.5-transcribe`, 번역 모델은 `gemini-3.8-flash`입니다.
+API와 Worker는 루트 `.env`를 읽습니다. 기존 프로세스 환경변수가 우선합니다. `.env.example`은 키가 없는 공유용 예시입니다. 전사와 번역 모두 `gemini-3.8-flash`입니다. 전사는 단어별 시간이 아닌 문장/발화별 시작·종료·원문 JSON을 요청하고 SRT로 변환합니다.
 
 ## 필수 외부 도구
 

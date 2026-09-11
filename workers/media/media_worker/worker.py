@@ -20,6 +20,7 @@ from .process import run_process, Cancelled
 from .providers import GeminiProvider
 from .llm_trace import capture_calls
 from .checkpoints import Checkpoints
+from .sentence_transcription import transcription_prompt
 from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
@@ -114,6 +115,7 @@ class Worker:
                 checkpoints = Checkpoints(work, {"version": 1, "source_size": source.stat().st_size,
                     "source_mtime": source.stat().st_mtime_ns, "options": record.options.to_dict(),
                     "stt": getattr(self.provider, "transcription_model", None),
+                    "transcription_policy": transcription_prompt(record.options.source_language, 0),
                     "translation": getattr(self.provider, "translation_model", None),
                     "filter_model": getattr(self.provider, "audio_filter_model", None),
                     "filter_enabled": os.getenv("VOCALIZATION_FILTER_ENABLED", "false")},
