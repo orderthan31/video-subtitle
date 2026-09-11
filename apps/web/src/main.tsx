@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {Captions, Upload, FileVideo, Download, Trash2, X, Pause, Play, RefreshCw, Check, Clock} from 'lucide-react';
 import {base, Job, request, resumeUpload} from './api';
 import './styles.css';
+import {StageProgress} from './StageProgress';
 
 const labels: Record<string, string> = {UPLOADING:'업로드 중', QUEUED:'처리 대기', ANALYZING:'영상 분석', EXTRACTING_AUDIO:'오디오 추출', PREPROCESSING_AUDIO:'음성 전처리', TRANSCRIBING:'음성 전사', FILTERING_TRANSCRIPT:'전사 정리', TRANSLATING:'번역', GENERATING_SUBTITLE:'자막 생성', ENCODING:'영상 출력', VALIDATING:'결과 검증', CLEANING:'파일 정리', COMPLETED:'완료', FAILED:'실패', CANCELLED:'취소됨'};
 const terminal = (job: Job) => ['COMPLETED','FAILED','CANCELLED'].includes(job.status);
@@ -85,7 +86,7 @@ function App() {
           {job.status==='COMPLETED'&&<><a className="download" href={`${base}/jobs/${job.job_id}/results/final.mp4`}><Download size={16}/>MP4</a><a className="download" href={`${base}/jobs/${job.job_id}/results/translated.srt`}><Download size={16}/>SRT</a></>}
           {job.status==='UPLOADING'&&<button className="icon" disabled={busy} title="업로드 재개" onClick={()=>{setResumeId(job.job_id);setUploadId(job.job_id);setFile(null);setProgress(job.uploaded_bytes);setTarget(job.target_language);setQuality(job.quality_profile);}}><Play size={18}/></button>}
           {terminal(job)?<button className="icon danger" title="작업 삭제" disabled={pending===job.job_id} onClick={()=>setConfirm(job)}><Trash2 size={18}/></button>:<button className="icon danger" title="작업 취소" disabled={busy||pending===job.job_id||!!job.metadata.cancel_requested} onClick={()=>void action(job,'cancel')}><X size={18}/></button>}
-        </div></article>)}</div>}
+        </div><StageProgress job={job}/></article>)}</div>}
       </section>
     </main>
     {confirm&&<div className="overlay"><div role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog"><h2 id="delete-title">작업을 삭제할까요?</h2><p>{confirm.original_filename}</p><p>영상과 자막 파일이 함께 삭제됩니다.</p><div><button autoFocus onClick={()=>setConfirm(null)}>돌아가기</button><button className="destructive" disabled={!!pending} onClick={()=>void action(confirm,'delete')}>삭제</button></div></div></div>}

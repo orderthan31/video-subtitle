@@ -15,6 +15,7 @@ from .media import probe, extract_audio, preprocess_audio, encoding_args, select
 from .process import run_process, Cancelled
 from .providers import GeminiProvider
 from .cleanup import collect_orphans
+from .progress import encoding_progress
 from video_service.config import load_environment
 from video_service.capacity import assert_capacity
 
@@ -29,7 +30,8 @@ class Worker:
             record = self.repository.read(job_id)
             if record.metadata.get("cancel_requested") or record.status == JobStatus.CANCELLED:
                 raise Cancelled()
-            return self.repository.update_status(job_id, status, **kwargs)
+            metadata = {"stage_progress": None, **kwargs.pop("metadata", {})}
+            return self.repository.update_status(job_id, status, metadata=metadata, **kwargs)
 
     def cleanup(self, job_id, keep_output=False):
         root = self.repository.storage_root
@@ -45,12 +47,26 @@ class Worker:
                     return
                 repo.update_status(job_id, JobStatus.ANALYZING)
             last_heartbeat = 0
+            last_progress = 0
+            progress_path = None
+            progress_duration = 0
 
             def check():
-                nonlocal last_heartbeat
+                nonlocal last_heartbeat, last_progress
                 current = repo.read(job_id)
                 if current.metadata.get("cancel_requested") or current.status == JobStatus.CANCELLED:
                     raise Cancelled()
+                if progress_path is not None and time.monotonic() - last_progress >= 1:
+                    fraction = encoding_progress(progress_path, progress_duration)
+                    if fraction is not None:
+                        try:
+                            with job_lock(repo, job_id):
+                                latest = repo.read(job_id)
+                                latest.metadata["stage_progress"] = fraction
+                                repo.save(latest)
+                            last_progress = time.monotonic()
+                        except JobBusyError:
+                            pass
                 if time.monotonic() - last_heartbeat > 5:
                     assert_capacity(repo.storage_root,
                         int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
@@ -100,8 +116,11 @@ class Worker:
                 software = encoder == "libx265"
                 with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
                     self.transition(job_id, JobStatus.ENCODING, message="영상 인코딩 중")
+                    progress_path = work / "encode-progress.txt"
+                    progress_duration = metadata["duration"]
                     run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software),
                         cwd=work, log_name="encode.log", check=check)
+                    progress_path = None
                 self.transition(job_id, JobStatus.VALIDATING)
                 final = probe(target, work, check)
                 kinds = {s["codec_type"] for s in final["streams"]}
