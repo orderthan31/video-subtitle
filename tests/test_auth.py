@@ -208,6 +208,25 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/jobs/{anonymous}").status_code, 404)
         self.assertEqual([j["job_id"] for j in self.client.get("/api/jobs").json()["jobs"]], [job])
 
+    def test_shared_cookie_account_switch_rejects_the_previous_tabs_session(self):
+        first = self.login(self.client)
+        self.create(self.client)
+        second = self.login(self.other, "bob")
+        bob_job = self.create(self.other)
+        self.client.headers["X-Session-Token"] = first.json()["csrf_token"]
+        self.client.cookies.update(self.other.cookies)
+        # Another tab changed the shared cookie, but this tab still represents Alice.
+        for method, path, options in [("GET", "/api/jobs", {}),
+                ("POST", "/api/uploads", {"json": self.payload}),
+                ("POST", "/api/auth/logout", {})]:
+            with self.subTest(path=path):
+                result = self.client.request(method, path, **options)
+                self.assertEqual(result.status_code, 401, result.text)
+        self.assertEqual(len(self.repo.list()), 2)
+        self.assertEqual(self.other.get("/api/auth/session").json()["user"], self.bob)
+        self.client.headers["X-Session-Token"] = second.json()["csrf_token"]
+        self.assertEqual([j["job_id"] for j in self.client.get("/api/jobs").json()["jobs"]], [bob_job])
+
 
 if __name__ == "__main__":
     unittest.main()

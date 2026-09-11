@@ -10,6 +10,7 @@ export function setCsrfToken(token = '') {
 export async function authenticatedFetch(url: string, init: RequestInit = {}, login = false) {
   const current = generation;
   const headers = new Headers(init.headers);
+  if (csrfToken && !login) headers.set('X-Session-Token', csrfToken);
   if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes((init.method || 'GET').toUpperCase())) {
     headers.set('X-CSRF-Token', csrfToken);
   }

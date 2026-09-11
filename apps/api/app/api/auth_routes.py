@@ -45,6 +45,9 @@ def require_session(request):
     session = current_session(request)
     if session is None:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+    expected = request.headers.get("X-Session-Token")
+    if expected is not None and not hmac.compare_digest(expected.encode("utf-8"), session["csrf_token"].encode("utf-8")):
+        raise HTTPException(status_code=401, detail="다른 창에서 로그인 상태가 변경되었습니다. 다시 로그인하세요.")
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         actual = request.headers.get("X-CSRF-Token", "")
         if not hmac.compare_digest(actual.encode("utf-8"), session["csrf_token"].encode("utf-8")):

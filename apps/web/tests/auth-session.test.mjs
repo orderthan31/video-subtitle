@@ -11,6 +11,7 @@ test('authenticated requests include cookies and CSRF only for unsafe methods', 
   }
   assert.deepEqual(calls.map(c => c.headers.get('X-CSRF-Token')), [null, null, null, 'test-csrf', 'test-csrf', 'test-csrf']);
   for (const call of calls) {
+    assert.equal(call.headers.get('X-Session-Token'), 'test-csrf');
     assert.equal(call.credentials, 'include');
     assert.equal(call.cache, 'no-store');
     assert.equal(call.headers.get('Content-Type'), 'application/json');
@@ -18,6 +19,11 @@ test('authenticated requests include cookies and CSRF only for unsafe methods', 
   setCsrfToken();
   await authenticatedFetch('/api/uploads', {method: 'POST'});
   assert.equal(calls.at(-1).headers.get('X-CSRF-Token'), null);
+  assert.equal(calls.at(-1).headers.get('X-Session-Token'), null);
+  setCsrfToken('old-session');
+  await authenticatedFetch('/api/auth/login', {method: 'POST'}, true);
+  assert.equal(calls.at(-1).headers.get('X-Session-Token'), null);
+  setCsrfToken();
 });
 
 test('unauthorized session expires once but login failures do not clear it', async t => {
