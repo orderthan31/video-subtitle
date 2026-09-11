@@ -123,7 +123,21 @@ class Worker:
                     self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
                     audio = extract_audio(source, work, check)
                     self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)
-                    audio, spans = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter)
+                    vocalizations = []
+                    protected_audio = []
+                    filter_enabled = os.getenv("VOCALIZATION_FILTER_ENABLED", "false").lower()
+                    if filter_enabled not in {"true", "false"}:
+                        raise ValueError("VOCALIZATION_FILTER_ENABLED must be true or false")
+                    if filter_enabled == "true" and record.options.audio_filter != "off":
+                        analysis = self.provider.detect_vocalizations(audio, record.options.source_language,
+                            check, strength=record.options.audio_filter)
+                        vocalizations, protected_audio = analysis["removals"], analysis["protected"]
+                        write_json_atomic(work / "vocalization-analysis.json", analysis)
+                    audio, spans = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter,
+                        vocalizations=vocalizations, protected_audio=protected_audio)
+                    self.transition(job_id, JobStatus.PREPROCESSING_AUDIO, metadata={
+                        "vocalization_filter_enabled": filter_enabled == "true" and record.options.audio_filter != "off",
+                        "vocalization_removal_count": len(vocalizations)})
                     self.transition(job_id, JobStatus.TRANSCRIBING)
                     segments = self.provider.transcribe(audio, record.options.source_language, check, spans=spans)
                     segments = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in segments]

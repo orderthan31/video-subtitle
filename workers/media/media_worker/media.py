@@ -91,7 +91,7 @@ def copy_audio_intervals(source, destination, intervals, check=lambda: None):
     return build_timeline_from_kept_intervals(actual)
 
 
-def preprocess_audio(source, work, check=lambda: None, audio_filter="conservative"):
+def preprocess_audio(source, work, check=lambda: None, audio_filter="conservative", vocalizations=None, protected_audio=None):
     if audio_filter not in {"off", "conservative", "strong"}:
         raise ValueError("Unsupported audio filter")
     with wave.open(str(source), "rb") as audio:
@@ -105,6 +105,12 @@ def preprocess_audio(source, work, check=lambda: None, audio_filter="conservativ
             cwd=work, log_name="silence.log", check=check)
         with log.open(encoding="utf-8", errors="replace") as lines:
             intervals = kept_intervals(lines, duration, minimum=minimum)
+        if protected_audio:
+            from .vocalizations import protect_intervals
+            intervals = protect_intervals(intervals, protected_audio, duration)
+        if vocalizations:
+            from .vocalizations import subtract_intervals
+            intervals = subtract_intervals(intervals, vocalizations, duration)
     output = work / "processed-audio.wav"
     spans = copy_audio_intervals(source, output, intervals, check)
     write_json_atomic(work / "timeline-map.json", [span.to_dict() for span in spans])

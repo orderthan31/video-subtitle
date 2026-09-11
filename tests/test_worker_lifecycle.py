@@ -60,6 +60,8 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.repo.save(self.record)
         self.repo.update_status(self.job, JobStatus.QUEUED)
         provider = Mock()
+        provider.detect_vocalizations.return_value = {"removals": [{"start": 2.3, "end": 2.7, "kind": "breath"}],
+            "protected": [{"start": 12, "end": 13}]}
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Original speech.")]
         provider.translate.side_effect = lambda segments, language, check: [s.with_text(f"Translated speech. {language}") for s in segments]
         worker = Worker(self.repo, provider)
@@ -71,10 +73,11 @@ class WorkerLifecycleTests(unittest.TestCase):
         def encode(args, **kwargs):
             Path(args[-1]).write_bytes(b"output")
         with ExitStack() as stack:
+            stack.enter_context(patch.dict("os.environ", {"VOCALIZATION_FILTER_ENABLED": "true"}))
             stack.enter_context(patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"))
             stack.enter_context(patch("media_worker.worker.probe", return_value=metadata))
             stack.enter_context(patch("media_worker.worker.extract_audio", return_value=audio))
-            stack.enter_context(patch("media_worker.worker.preprocess_audio", return_value=(audio,
+            preprocess = stack.enter_context(patch("media_worker.worker.preprocess_audio", return_value=(audio,
                 build_timeline_from_kept_intervals([(12, 13)]))))
             stack.enter_context(patch("media_worker.worker.run_process", side_effect=encode))
             decode = stack.enter_context(patch("media_worker.worker.validate_decodable"))
@@ -91,6 +94,10 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertIn("Translated speech.", translated)
         self.assertIn("speech. ko", translated)
         provider.transcribe.assert_called_once()
+        provider.detect_vocalizations.assert_called_once()
+        self.assertEqual(preprocess.call_args.kwargs["vocalizations"], provider.detect_vocalizations.return_value["removals"])
+        self.assertEqual(preprocess.call_args.kwargs["protected_audio"], provider.detect_vocalizations.return_value["protected"])
+        self.assertEqual(record.metadata["vocalization_removal_count"], 1)
         self.assertEqual([call.args[1] for call in provider.translate.call_args_list], ["ko", "ja", "es"])
         for language in ("ja", "es"):
             text = (output / f"translated.{language}.srt").read_text(encoding="utf-8")

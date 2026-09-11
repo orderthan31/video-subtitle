@@ -21,7 +21,8 @@ class GeminiProvider:
         self.key = os.getenv("GEMINI_API_KEY", "")
         self.transcription_model = os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-3.5-transcribe")
         self.translation_model = os.getenv("GEMINI_TRANSLATION_MODEL", "gemini-3.8-flash")
-        if not self.key or not all(re.fullmatch(r"[a-zA-Z0-9_.-]+", model) for model in (self.transcription_model, self.translation_model)):
+        self.audio_filter_model = os.getenv("GEMINI_AUDIO_FILTER_MODEL", self.translation_model)
+        if not self.key or not all(re.fullmatch(r"[a-zA-Z0-9_.-]+", model) for model in (self.transcription_model, self.translation_model, self.audio_filter_model)):
             raise ValueError("Set GEMINI_API_KEY and valid transcription/translation model names")
 
     async def _request(self, parts, schema, check, model, transcription_config=None):
@@ -64,6 +65,10 @@ class GeminiProvider:
 
     def request(self, parts, schema, check, model, transcription_config=None):
         return asyncio.run(self._request(parts, schema, check, model, transcription_config))
+
+    def detect_vocalizations(self, source, language, check, strength="conservative"):
+        from .vocalizations import detect_vocalizations
+        return detect_vocalizations(self, source, language, check, strength)
 
     def transcribe(self, source, language, check, *, spans=None):
         result = []
