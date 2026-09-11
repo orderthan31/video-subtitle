@@ -15,6 +15,7 @@ from .media import probe, extract_audio, preprocess_audio, encoding_args, select
 from .process import run_process, Cancelled
 from .providers import GeminiProvider
 from video_service.config import load_environment
+from video_service.capacity import assert_capacity
 
 
 class Worker:
@@ -50,6 +51,9 @@ class Worker:
                 if current.metadata.get("cancel_requested") or current.status == JobStatus.CANCELLED:
                     raise Cancelled()
                 if time.monotonic() - last_heartbeat > 5:
+                    assert_capacity(repo.storage_root,
+                        int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
+                        int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))))
                     try:
                         with job_lock(repo, job_id):
                             repo.heartbeat(job_id)

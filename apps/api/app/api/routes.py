@@ -47,14 +47,15 @@ def health() -> dict[str, str]:
 @router.post("/uploads", response_model=UploadCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_upload(payload: UploadCreateRequest) -> UploadCreateResponse:
     try:
-        storage_guard.assert_can_accept_upload(payload.size)
-        record = repository.create_job(
-            original_filename=payload.filename,
-            expected_size=payload.size,
-            source_language=payload.source_language,
-            target_language=payload.target_language,
-            quality_profile=payload.quality_profile,
-        )
+        with job_lock(repository, "0" * 32):
+            storage_guard.assert_can_accept_upload(payload.size)
+            record = repository.create_job(
+                original_filename=payload.filename,
+                expected_size=payload.size,
+                source_language=payload.source_language,
+                target_language=payload.target_language,
+                quality_profile=payload.quality_profile,
+            )
     except StorageLimitError as exc:
         raise HTTPException(status_code=status.HTTP_507_INSUFFICIENT_STORAGE, detail=str(exc)) from exc
 
