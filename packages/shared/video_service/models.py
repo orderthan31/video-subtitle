@@ -56,6 +56,11 @@ class JobOptions:
     source_language: str = "auto"
     target_language: str = "ko"
     quality_profile: QualityProfile = QualityProfile.BALANCED
+    video_codec: str = "hevc"
+
+    def __post_init__(self):
+        if self.video_codec not in {"hevc", "h264"}:
+            raise ValueError("Unsupported video codec")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "JobOptions":
@@ -64,6 +69,7 @@ class JobOptions:
             source_language=str(data.get("source_language", "auto")),
             target_language=str(data.get("target_language", "ko")),
             quality_profile=QualityProfile(data.get("quality_profile", QualityProfile.BALANCED)),
+            video_codec=str(data.get("video_codec", "hevc")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +77,7 @@ class JobOptions:
             "source_language": self.source_language,
             "target_language": self.target_language,
             "quality_profile": self.quality_profile.value,
+            "video_codec": self.video_codec,
         }
 
 
@@ -135,4 +142,3 @@ class JobRecord:
         now = utc_now_iso()
         self.updated_at = now
         self.heartbeat_at = now
-

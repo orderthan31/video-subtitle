@@ -21,6 +21,12 @@ class OutputValidationTests(unittest.TestCase):
     def test_expected_output_passes(self):
         validate_output(self.source, self.output, 100)
 
+    def test_requested_h264_requires_h264_and_avc1(self):
+        self.output["streams"][0].update(codec_name="h264", codec_tag_string="avc1")
+        validate_output(self.source, self.output, 100, "h264")
+        with self.assertRaises(ValueError):
+            validate_output(self.source, self.output, 100, "hevc")
+
     def test_decode_validation_propagates_failure_and_cancellation_check(self):
         check = lambda: None
         with patch("media_worker.process.run_process", side_effect=RuntimeError("corrupt frame")) as run:

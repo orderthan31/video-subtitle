@@ -90,3 +90,8 @@ API와 Worker는 접수 잠금을 공유한다. 전체 실제 사용량에 모�
 Worker는 출력 메타데이터뿐 아니라 FFmpeg 전체 디코딩을 통과한 뒤에만 작업을 완료한다. 영상·오디오를 파일에 다시 쓰지 않고 null 출력으로 읽으며 `-xerror`로 디코딩 오류를 실패 처리한다. 긴 영상에서는 추가 CPU 시간과 디스크 읽기가 발생한다. 이 단계에도 작업 취소·종료·용량 점검이 적용된다.
 
 원본의 직각 회전 메타데이터를 반영한 해상도, HEVC/hvc1/yuv420p·AAC 형식, 재생 시간 및 자막 시간 범위를 검사한다. 이는 번역 정확도·시각적 품질·읽기 속도·정밀 프레임 타이밍이나 모든 플레이어 호환성을 보장하는 검사가 아니다.
+## 인코더와 작업 코덱
+
+작업의 `video_codec`이 출력 코덱을 결정한다. `VIDEO_ENCODER=hevc_nvenc` 또는 `h264_nvenc`는 GPU 선호 설정으로 해석하며 실제 작업에 따라 해당 NVENC 인코더를 선택한다. `libx265` 또는 `libx264`를 지정하면 작업 코덱에 맞는 소프트웨어 인코더를 선택한다. GPU 사전 검사 실패 시 소프트웨어 전환은 계속 `ALLOW_SOFTWARE_ENCODER_FALLBACK=true`일 때만 허용한다.
+
+H.264 실제 짧은 파이프라인 재현: `python scripts/smoke-media.py --run-live --audio data/stt-smoke.wav --video-codec h264`. 이 명령은 Gemini를 호출한다. AI 없이 인코딩만 시험하려면 `scripts/smoke-output-validation.py`에 입력 영상·자막과 `--video-codec h264`를 지정한다.

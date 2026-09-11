@@ -45,14 +45,17 @@ def display_dimensions(stream):
     return None
 
 
-def validate_output(source, output, size):
+def validate_output(source, output, size, video_codec="hevc"):
+    if video_codec not in {"hevc", "h264"}:
+        raise ValueError("Unsupported video codec")
     videos = [s for s in output["streams"] if s["codec_type"] == "video"]
     audios = [s for s in output["streams"] if s["codec_type"] == "audio"]
     if size <= 0 or len(videos) != 1 or len(audios) != 1:
         raise ValueError("Invalid output streams")
     video, audio = videos[0], audios[0]
-    if video.get("codec_name") != "hevc" or video.get("codec_tag_string") != "hvc1":
-        raise ValueError("Output must be HEVC with hvc1 tag")
+    tag = "hvc1" if video_codec == "hevc" else "avc1"
+    if video.get("codec_name") != video_codec or video.get("codec_tag_string") != tag:
+        raise ValueError(f"Output must be {video_codec} with {tag} tag")
     if video.get("pix_fmt") != "yuv420p" or audio.get("codec_name") != "aac":
         raise ValueError("Output must use yuv420p video and AAC audio")
     original_video = next(s for s in source["streams"] if s["codec_type"] == "video")

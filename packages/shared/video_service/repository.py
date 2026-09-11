@@ -27,6 +27,7 @@ class FilesystemJobRepository:
         target_language: str,
         quality_profile: QualityProfile,
         metadata: dict | None = None,
+        video_codec: str = "hevc",
     ) -> JobRecord:
         job_id = uuid4().hex
         source_filename = f"source{safe_suffix(original_filename)}"
@@ -40,7 +41,7 @@ class FilesystemJobRepository:
             original_filename=original_filename,
             source_filename=source_filename,
             expected_size=expected_size,
-            options=JobOptions(source_language, target_language, quality_profile),
+            options=JobOptions(source_language, target_language, quality_profile, video_codec),
             metadata=dict(metadata or {}),
         )
         self.save(record)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, UUID4
 
@@ -14,6 +14,7 @@ class UploadCreateRequest(BaseModel):
     source_language: str = "auto"
     target_language: str = Field(default="ko", pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
     quality_profile: QualityProfile = QualityProfile.BALANCED
+    video_codec: Literal["hevc", "h264"] = "hevc"
 
 
 class UploadCreateResponse(BaseModel):
@@ -53,6 +54,7 @@ class JobResponse(BaseModel):
     source_language: str
     target_language: str
     quality_profile: str
+    video_codec: str
     status_message: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -75,6 +77,7 @@ def job_to_response(record: JobRecord) -> JobResponse:
         source_language=record.options.source_language,
         target_language=record.options.target_language,
         quality_profile=record.options.quality_profile.value,
+        video_codec=record.options.video_codec,
         status_message=record.status_message,
         error=record.error,
         metadata=record.metadata,

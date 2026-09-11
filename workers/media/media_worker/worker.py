@@ -102,7 +102,7 @@ class Worker:
                 work = repo.job_dir(job_id) / "work"
                 work.mkdir(exist_ok=True)
                 with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
-                    encoder = select_encoder(work, check)
+                    encoder = select_encoder(work, check, video_codec=record.options.video_codec)
                 source = repo.source_path(record).resolve()
                 metadata = probe(source, work, check)
                 videos = [stream for stream in metadata["streams"] if stream["codec_type"] == "video"]
@@ -142,17 +142,17 @@ class Worker:
                 (work / "translated.srt").write_text(srt, encoding="utf-8")
                 self.transition(job_id, JobStatus.ENCODING, message="인코딩 슬롯 대기 중")
                 target = (output / "final.mp4").resolve()
-                software = encoder == "libx265"
+                software = encoder in {"libx265", "libx264"}
                 with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
                     self.transition(job_id, JobStatus.ENCODING, message="영상 인코딩 중")
                     progress_path = work / "encode-progress.txt"
                     progress_duration = metadata["duration"]
-                    run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software),
+                    run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software, record.options.video_codec),
                         cwd=work, log_name="encode.log", check=check)
                     progress_path = None
                 self.transition(job_id, JobStatus.VALIDATING)
                 final = probe(target, work, check)
-                validate_output(metadata, final, target.stat().st_size)
+                validate_output(metadata, final, target.stat().st_size, record.options.video_codec)
                 validate_decodable(target, work, check)
                 self.transition(job_id, JobStatus.CLEANING)
                 size = target.stat().st_size

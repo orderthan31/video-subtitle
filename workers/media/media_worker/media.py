@@ -105,31 +105,38 @@ def preprocess_audio(source, work, check=lambda: None):
     return output, spans
 
 
-def encoding_args(source, destination, video_stream, quality="balanced", software=False):
+def encoding_args(source, destination, video_stream, quality="balanced", software=False, video_codec="hevc"):
+    if video_codec not in {"hevc", "h264"}:
+        raise ValueError("Unsupported video codec")
     fps = float(Fraction(video_stream.get("avg_frame_rate", "0/1")))
     if not math.isfinite(fps) or fps <= 0:
         raise ValueError("Invalid frame rate")
     cq = {"balanced": 24, "high": 20, "compact": 29}[quality]
     args = [executable("ffmpeg"), "-nostdin", "-y", "-i", source, "-map", "0:v:0", "-map", "0:a:0",
-        "-vf", "subtitles=translated.srt", "-c:v", "libx265" if software else "hevc_nvenc"]
+        "-vf", "subtitles=translated.srt", "-c:v",
+        ("libx265" if video_codec == "hevc" else "libx264") if software else f"{video_codec}_nvenc"]
     args += ["-preset", "medium", "-crf", str(cq)] if software else ["-preset", "p5", "-rc", "vbr", "-cq", str(cq), "-b:v", "0"]
-    return args + ["-g", str(max(1, round(fps * 2))), "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
+    return args + ["-g", str(max(1, round(fps * 2))), "-tag:v", "hvc1" if video_codec == "hevc" else "avc1", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
         "-progress", "encode-progress.txt", "-nostats", destination]
 
 
-def select_encoder(work, check=lambda: None):
+def select_encoder(work, check=lambda: None, video_codec="hevc"):
+    if video_codec not in {"hevc", "h264"}:
+        raise ValueError("Unsupported video codec")
     requested = os.getenv("VIDEO_ENCODER", "hevc_nvenc")
-    if requested == "libx265":
-        return requested
-    if requested != "hevc_nvenc":
+    software = "libx265" if video_codec == "hevc" else "libx264"
+    hardware = f"{video_codec}_nvenc"
+    if requested in {"libx265", "libx264"}:
+        return software
+    if requested not in {"hevc_nvenc", "h264_nvenc"}:
         raise ValueError("Unsupported VIDEO_ENCODER")
     try:
         run_process([executable("ffmpeg"), "-nostdin", "-f", "lavfi", "-i", "color=size=640x360:rate=30",
-            "-frames:v", "1", "-c:v", "hevc_nvenc", "-f", "null", "-"],
+            "-frames:v", "1", "-c:v", hardware, "-f", "null", "-"],
             cwd=work, log_name="encoder-check.log", check=check, timeout=30)
-        return "hevc_nvenc"
+        return hardware
     except RuntimeError:
         if os.getenv("ALLOW_SOFTWARE_ENCODER_FALLBACK", "false").lower() != "true":
             raise
-        return "libx265"
+        return software

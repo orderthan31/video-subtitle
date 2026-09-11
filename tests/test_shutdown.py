@@ -40,7 +40,7 @@ class ShutdownTests(unittest.TestCase):
         current = self.create_job()
         queued = self.create_job()
         before = signal.getsignal(signal.SIGTERM)
-        def stop_during_probe(work, check):
+        def stop_during_probe(work, check, **kwargs):
             signal.raise_signal(signal.SIGTERM)
             check()
         with shutdown_signals(self.worker.stop), \
@@ -85,7 +85,7 @@ class ShutdownTests(unittest.TestCase):
             children.append(child)
             self.worker.stop.set()
             return child
-        def encoder(work, check):
+        def encoder(work, check, **kwargs):
             run_process([sys.executable, "-c", "import time; time.sleep(60)"],
                 cwd=work, log_name="child.log", check=check)
         with patch("media_worker.worker.select_encoder", side_effect=encoder), \

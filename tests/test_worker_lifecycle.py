@@ -94,7 +94,7 @@ class WorkerLifecycleTests(unittest.TestCase):
 
     def test_cancel_during_pipeline_stops_before_audio(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        def cancel(work, check):
+        def cancel(work, check, **kwargs):
             with job_lock(self.repo, self.job):
                 record = self.repo.read(self.job)
                 record.metadata["cancel_requested"] = True

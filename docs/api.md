@@ -137,3 +137,8 @@ GET /api/jobs/{job_id}/results/translated.srt
 SMI는 기존 번역 cue를 SAMI 형식으로 직렬화한다. `SYNC Start`는 밀리초 단위이며 종료 시각에는 `&nbsp;`로 자막을 지운다. 근거: [Microsoft SAMI 1.0](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/dnacc/understanding-sami-1.0). 태그처럼 보이는 번역 내용은 이스케이프하고 실제 줄바꿈만 `BR`로 변환한다.
 
 업로드의 `target_language`는 `ko`, `en`, `ja`, `zh`, `es`, `pt-BR`와 같은 2~3자리 소문자 기본 언어 코드와 선택적 하위 태그 형식으로 검증한다. 언어 이름 문장이나 CSS 구문은 생성 전에 422로 거부한다. 플레이어별 문자 인코딩·스타일 차이는 별도 검증 대상이다.
+## 출력 코덱 선택
+
+업로드 생성 JSON에 `video_codec`을 `hevc`(기본) 또는 `h264`로 지정한다. 다른 값은 422로 거부한다. 작업 조회에 선택값이 반환되고, 이전 레코드에서 값이 없으면 `hevc`로 읽는다. 동일 `request_id`로 코덱을 변경하면 409다. 업로드 재개에서는 기존 작업 코덱을 그대로 유지한다.
+
+두 코덱 모두 `final.mp4`와 기존 자막 파일을 제공한다. HEVC는 `hvc1`, H.264는 `avc1` MP4 태그와 AAC 오디오·yuv420p 비디오를 사용한다. 품질 프리셋 수치는 공통이지만 코덱 간 동일한 시각적 품질이나 용량을 의미하지 않는다.

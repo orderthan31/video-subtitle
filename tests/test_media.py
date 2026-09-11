@@ -64,6 +64,24 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(args[args.index("-i") + 1], "color=size=640x360:rate=30")
         self.assertIn("hevc_nvenc", args)
 
+    def test_h264_hardware_and_software_arguments(self):
+        for software, encoder in ((False, "h264_nvenc"), (True, "libx264")):
+            args = encoding_args("source.mp4", "final.mp4", {"avg_frame_rate": "30/1"},
+                software=software, video_codec="h264")
+            self.assertEqual(args[args.index("-c:v") + 1], encoder)
+            self.assertEqual(args[args.index("-tag:v") + 1], "avc1")
+            self.assertIn("subtitles=translated.srt", args)
+            self.assertIn("yuv420p", args)
+
+    def test_h264_preflight_and_fallback_match_requested_codec(self):
+        with patch.dict("os.environ", {"VIDEO_ENCODER": "hevc_nvenc"}), \
+                patch("media_worker.media.run_process") as run:
+            self.assertEqual(select_encoder(self.work, video_codec="h264"), "h264_nvenc")
+        self.assertIn("h264_nvenc", run.call_args.args[0])
+        with patch.dict("os.environ", {"VIDEO_ENCODER": "hevc_nvenc", "ALLOW_SOFTWARE_ENCODER_FALLBACK": "true"}), \
+                patch("media_worker.media.run_process", side_effect=RuntimeError("unavailable")):
+            self.assertEqual(select_encoder(self.work, video_codec="h264"), "libx264")
+
     def test_process_cancel_terminates_child(self):
         def cancel():
             raise Cancelled()

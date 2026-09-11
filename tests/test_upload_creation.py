@@ -44,7 +44,7 @@ class UploadCreationTests(unittest.TestCase):
     def test_changed_payload_conflicts_without_mutation(self):
         first = self.client.post("/api/uploads", json=self.payload).json()
         for changes in ({"filename": "other.mp4"}, {"size": 7}, {"source_language": "en"},
-                        {"target_language": "ja"}, {"quality_profile": "high"}):
+                        {"target_language": "ja"}, {"quality_profile": "high"}, {"video_codec": "h264"}):
             response = self.client.post("/api/uploads", json={**self.payload, **changes})
             self.assertEqual(response.status_code, 409)
         self.assertEqual(len(self.repo.list()), 1)
@@ -63,6 +63,19 @@ class UploadCreationTests(unittest.TestCase):
         second = self.client.post("/api/uploads", json=payload).json()
         self.assertNotEqual(first["job_id"], second["job_id"])
         self.assertEqual(self.client.post("/api/uploads", json={**payload, "request_id": "invalid"}).status_code, 422)
+
+    def test_codec_is_validated_persisted_and_returned(self):
+        response = self.client.post("/api/uploads", json={**self.payload, "video_codec": "h264"})
+        job_id = response.json()["job_id"]
+        self.assertEqual(self.repo.read(job_id).options.video_codec, "h264")
+        self.assertEqual(self.client.get(f"/api/jobs/{job_id}").json()["video_codec"], "h264")
+        self.assertEqual(self.client.post("/api/uploads", json={**self.payload, "video_codec": "av1"}).status_code, 422)
+
+    def test_old_records_default_to_hevc(self):
+        from video_service.models import JobOptions
+        self.assertEqual(JobOptions.from_dict({}).video_codec, "hevc")
+        with self.assertRaises(ValueError):
+            JobOptions.from_dict({"video_codec": "av1"})
 
     def test_admission_lock_prevents_racing_creation(self):
         with job_lock(self.repo, "0" * 32):
