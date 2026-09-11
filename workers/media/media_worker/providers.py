@@ -10,6 +10,7 @@ import wave
 import httpx
 from video_service.transcript import TranscriptSegment
 from video_service.config import load_environment
+from video_service.timeline import identity_timeline
 
 
 class GeminiProvider:
@@ -60,16 +61,15 @@ class GeminiProvider:
     def request(self, parts, schema, check, model, transcription_config=None):
         return asyncio.run(self._request(parts, schema, check, model, transcription_config))
 
-    def transcribe(self, source, language, check):
+    def transcribe(self, source, language, check, *, spans=None):
         result = []
         with wave.open(str(source), "rb") as audio:
             rate = audio.getframerate()
             total = audio.getnframes()
-            # Two-second context overlap; midpoint ownership avoids duplicate cues.
-            for first in range(0, total, rate * 60):
+            # Context overlap stays inside each retained audio region.
+            regions = identity_timeline(total / rate) if spans is None else spans
+            for first, left, right, span in transcription_windows(total, rate, regions):
                 check()
-                left = max(0, first - rate)
-                right = min(total, first + rate * 61)
                 audio.setpos(left)
                 buffer = io.BytesIO()
                 with wave.open(buffer, "wb") as chunk:
@@ -84,9 +84,13 @@ class GeminiProvider:
                     if not (math.isfinite(segment.start) and math.isfinite(segment.end)
                             and 0 <= segment.start < segment.end <= (right-left)/rate + 0.1):
                         raise ValueError("STT returned invalid timestamps")
-                    start, end = segment.start + left/rate, min(segment.end + left/rate, total/rate)
+                    region_first = round(span.processed_start * rate)
+                    offset = span.processed_start + (left - region_first) / rate
+                    start = offset + segment.start
+                    end = min(offset + segment.end, span.processed_end)
                     middle = (start + end) / 2
-                    if first/rate <= middle < min(total/rate, first/rate + 60):
+                    owner_start = span.processed_start + (first - region_first) / rate
+                    if start < end and owner_start <= middle < min(span.processed_end, owner_start + 60):
                         result.append(segment.with_times(start, end))
         return sorted(result, key=lambda segment: segment.start)
 
@@ -103,6 +107,26 @@ class GeminiProvider:
                 raise ValueError("Translation output does not match input segments")
             result.extend(segment.with_text(text) for segment, text in zip(batch, translated))
         return result
+
+
+def transcription_windows(total, rate, spans):
+    regions = []
+    previous = 0.0
+    for span in spans:
+        if not (math.isfinite(span.processed_start) and math.isfinite(span.processed_end)
+                and abs(span.processed_start - previous) < 1e-8
+                and span.processed_start <= span.processed_end):
+            raise ValueError("Invalid transcription timeline")
+        left, right = round(span.processed_start * rate), round(span.processed_end * rate)
+        if right > total:
+            raise ValueError("Transcription timeline exceeds audio")
+        regions.append((left, right, span))
+        previous = span.processed_end
+    if round(previous * rate) != total:
+        raise ValueError("Transcription timeline does not cover audio")
+    for start, end, span in regions:
+        for first in range(start, end, rate * 60):
+            yield first, max(start, first - rate), min(end, first + rate * 61), span
 
 
 def parse_word_transcriptions(parts):

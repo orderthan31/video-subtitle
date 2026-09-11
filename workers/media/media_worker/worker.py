@@ -94,7 +94,7 @@ class Worker:
                 self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)
                 audio, spans = preprocess_audio(audio, work, check)
                 self.transition(job_id, JobStatus.TRANSCRIBING)
-                segments = self.provider.transcribe(audio, record.options.source_language, check)
+                segments = self.provider.transcribe(audio, record.options.source_language, check, spans=spans)
                 segments = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in segments]
                 self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
                 segments = filter_transcript_segments(segments)
