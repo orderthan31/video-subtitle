@@ -4,6 +4,8 @@
 
 ## 구현 및 검증
 
+- Gemini 연결 오류·타임아웃을 포함한 전송 오류에 최대 3회 시도를 적용했다. 429/5xx의 `Retry-After` 초/HTTP 날짜를 반영하며, 60초 초과 대기 요청은 조기 재요청 대신 실패로 알린다. 0.25초 이하 대기 단위마다 취소/종료를 확인한다. 인증 오류·불완전 응답은 반복하지 않는다. 모의 장애 회귀 포함 총 88개 테스트 통과. 응답 유실 후 재요청은 원격 처리·과금을 중복시킬 수 있으며 정확히 한 번 실행을 보장하지 않는다.
+
 - 원문 SRT 후속 기능 구현: 원본 영상 시간으로 복원한 전사에서 `original.srt`를 생성하고 완료 후 보존한다. API 다운로드와 `metadata.result_files` 기반 웹 원문/번역 링크를 추가해 기존 작업에는 없는 원문 파일을 표시하지 않는다. 생성·시간 복원·번역 분리·다운로드 회귀 포함 총 81개 테스트 및 웹 빌드 통과. 실제 Gemini→NVENC 작업 `774683ec6cef432c8ecdb0dcf612a2e6`에서 원문 3개 구간과 HTTP 응답, 데스크톱 링크 표시를 확인했다. 보고서: `data/live-smoke/ba0e8282aacd4aae89d32e887cca419f/report.json`.
 
 - STT 겹침 처리를 문장 단위에서 단어 타임스탬프 단위로 변경했다. 각 60초 담당 구간의 단어를 선택한 뒤 문장을 묶으며 무음 제거 경계는 계속 분리한다. 60초 경계 문장의 중복 방지·의도적 반복 보존 등 총 80개 테스트 통과. 실제 합성 음성을 58초에 배치한 Gemini 두 요청에서 기대 단어열이 모두 일치했고 59.4~61.9초 문장이 복원됐다. 재현: `scripts/smoke-transcription-boundary.py --run-live --audio data/stt-smoke.wav --expected-text "Hello Welcome to the subtitle test The weather is sunny today"`. 보고서: `data/transcription-boundary/5d290cd4fae14f378b3adb32113608f1/report.json` (Git 제외).

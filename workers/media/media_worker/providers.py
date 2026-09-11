@@ -6,6 +6,8 @@ import math
 import os
 import re
 import wave
+import time
+from email.utils import parsedate_to_datetime
 
 import httpx
 from video_service.transcript import TranscriptSegment
@@ -33,19 +35,21 @@ class GeminiProvider:
                         "generationConfig": ({"audioTranscriptionConfig": transcription_config} if transcription_config is not None
                             else {"responseMimeType": "application/json", "responseSchema": schema})},
                 ))
+                response = None
                 try:
                     while not task.done():
                         await asyncio.wait({task}, timeout=0.25)
                         check()
                     response = await task
+                except httpx.TransportError:
+                    if attempt == 2:
+                        raise RuntimeError("Gemini connection failed after 3 attempts") from None
                 finally:
                     if not task.done():
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
-                if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-                    for _ in range(4 * 2**attempt):
-                        check()
-                        await asyncio.sleep(0.25)
+                if response is None or (response.status_code in (429, 500, 502, 503, 504) and attempt < 2):
+                    await wait_for_retry(retry_delay(response, attempt), check)
                     continue
                 if response.is_error:
                     raise RuntimeError(f"Gemini request failed (HTTP {response.status_code})")
@@ -114,6 +118,34 @@ class GeminiProvider:
                 raise ValueError("Translation output does not match input segments")
             result.extend(segment.with_text(text) for segment, text in zip(batch, translated))
         return result
+
+
+def retry_delay(response, attempt):
+    fallback = 2**attempt
+    value = response.headers.get("retry-after") if response is not None else None
+    if not value:
+        return fallback
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            delay = parsedate_to_datetime(value).timestamp() - time.time()
+        except (ValueError, TypeError, OverflowError):
+            return fallback
+    if not math.isfinite(delay) or delay < 0:
+        return fallback
+    if delay > 60:
+        raise RuntimeError("Gemini requested a retry delay over 60 seconds; try again later")
+    return max(fallback, delay)
+
+
+async def wait_for_retry(delay, check):
+    while delay > 0:
+        check()
+        step = min(0.25, delay)
+        await asyncio.sleep(step)
+        delay -= step
+    check()
 
 
 def transcription_windows(total, rate, spans):
