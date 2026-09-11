@@ -18,7 +18,7 @@ from .providers import GeminiProvider
 from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
-from video_service.capacity import assert_capacity
+from video_service.capacity import assert_capacity, reserve_workspace
 from .shutdown import shutdown_signals, WorkerStopping
 
 
@@ -107,6 +107,9 @@ class Worker:
                 if not videos or not any(s["codec_type"] == "audio" for s in metadata["streams"]):
                     raise ValueError("Video and audio streams are required")
                 write_json_atomic(work / "metadata.json", metadata)
+                reserve_workspace(repo, job_id, metadata["duration"],
+                    int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
+                    int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), check)
                 self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
                 audio = extract_audio(source, work, check)
                 self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)

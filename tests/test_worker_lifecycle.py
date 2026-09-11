@@ -41,6 +41,20 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertIn("encoder unavailable", self.repo.read(self.job).error)
         self.assertEqual({p.name for p in self.repo.job_dir(self.job).iterdir()}, {"job.json"})
 
+    def test_pcm_capacity_failure_stops_before_extraction(self):
+        self.repo.update_status(self.job, JobStatus.QUEUED)
+        metadata = {"duration": 3600, "streams": [
+            {"codec_type": "video", "avg_frame_rate": "30/1"}, {"codec_type": "audio"}]}
+        with patch.dict("os.environ", {"VIDEO_SERVICE_QUOTA_BYTES": str(1024**2), "MIN_FREE_SPACE_BYTES": "0"}), \
+                patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"), \
+                patch("media_worker.worker.probe", return_value=metadata), \
+                patch("media_worker.worker.extract_audio") as extract:
+            self.worker.process(self.job)
+        extract.assert_not_called()
+        self.assertEqual(self.repo.read(self.job).status, JobStatus.FAILED)
+        self.assertIn("quota", self.repo.read(self.job).error)
+        self.assertFalse(self.repo.source_path(self.record).exists())
+
     def test_completed_pipeline_preserves_original_and_translated_subtitles(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
         provider = Mock()

@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from video_service.capacity import StorageLimitError, used_bytes
+from video_service.capacity import StorageLimitError, used_bytes, remaining_reservations
 from video_service.repository import FilesystemJobRepository
-from video_service.models import TERMINAL_STATUSES
 
 
 class StorageGuard:
@@ -28,11 +27,8 @@ class StorageGuard:
         self.root.mkdir(parents=True, exist_ok=True)
         total_used = self._service_used_bytes()
         # Reserve input plus an initial working/output allowance for active jobs.
-        reserved = 0
         repository = FilesystemJobRepository(self.root)
-        for record in repository.list():
-            if record.status not in TERMINAL_STATUSES:
-                reserved += max(0, record.expected_size * 4 - used_bytes(repository.job_dir(record.job_id)))
+        reserved = remaining_reservations(repository)
         additional = reserved + expected_size * 4
         if total_used + additional > self.quota_bytes:
             raise StorageLimitError("서비스 저장공간 할당량을 초과합니다.")
