@@ -99,6 +99,14 @@ function App() {
     } catch(e) {setError(e instanceof Error ? e.message : '요청에 실패했습니다.');}
     finally {setPending('');}
   }
+  async function retry(job: Job) {
+    setPending(job.job_id); setError('');
+    try {
+      await request(`/jobs/${job.job_id}/retry`, {method:'POST'});
+      await refresh();
+    } catch (e) {setError(e instanceof Error ? e.message : '재시도에 실패했습니다.');}
+    finally {setPending('');}
+  }
   const visible = jobs.filter(job => filter === 'all' || (filter === 'active' ? !terminal(job)
     : filter === 'history' ? terminal(job) : job.status === 'COMPLETED'));
   return <>
@@ -135,6 +143,7 @@ function App() {
           {job.status==='COMPLETED'&&!job.metadata.results_expired_at&&!!job.additional_languages?.length&&<details className="extra-downloads"><summary role="button" aria-label="추가 자막"><Download size={16}/>추가 자막</summary><div>{job.additional_languages.map(language=><React.Fragment key={language}>{['srt','smi'].map(format=>{const filename=`translated.${language}.${format}`;return job.metadata.result_files?.includes(filename)&&<a key={format} className="download" href={`${base}/jobs/${job.job_id}/results/${filename}`}><Download size={16}/>{languageName(language)} {format.toUpperCase()}</a>;})}</React.Fragment>)}</div></details>}
           {job.status==='AWAITING_REVIEW'&&<button className="icon" title="자막 수정" onClick={()=>setReviewJob(job)}><Pencil size={18}/></button>}
           {job.status==='UPLOADING'&&<button className="icon" disabled={busy} title="업로드 재개" onClick={()=>{setResumeId(job.job_id);setUploadId(job.job_id);setFile(null);setProgress(job.uploaded_bytes);setSource(job.source_language);setTarget(job.target_language);setQuality(job.quality_profile);setCodec(job.video_codec||'hevc');setSubtitleMode(job.subtitle_mode||'burn');setResolution(job.resolution||'original');setAdditionalLanguages(job.additional_languages||[]);setAudioFilter(job.audio_filter||'conservative');setReviewSubtitles(job.review_subtitles||false);}}><Play size={18}/></button>}
+          {['FAILED','CANCELLED'].includes(job.status)&&<button className="icon" title="중단된 작업 재시도" disabled={pending===job.job_id} onClick={()=>void retry(job)}><RefreshCw size={18}/></button>}
           {terminal(job)?<button className="icon danger" title="작업 삭제" disabled={pending===job.job_id} onClick={()=>setConfirm(job)}><Trash2 size={18}/></button>:<button className="icon danger" title="작업 취소" disabled={busy||pending===job.job_id||!!job.metadata.cancel_requested} onClick={()=>void action(job,'cancel')}><X size={18}/></button>}
         </div><StageProgress job={job}/></article>)}</div>}
       </section>

@@ -130,7 +130,7 @@ class SubtitleReviewTests(unittest.TestCase):
 
     def test_prepare_waits_and_approved_resume_does_not_repeat_ai(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        provider = Mock()
+        provider = Mock(transcription_model="test-stt", translation_model="test-translation", audio_filter_model="test-filter")
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Original")]
         provider.translate.return_value = [TranscriptSegment(0, 1, "Translated")]
         worker = Worker(self.repo, provider)
@@ -139,6 +139,9 @@ class SubtitleReviewTests(unittest.TestCase):
              "codec_name": "hevc", "codec_tag_string": "hvc1", "pix_fmt": "yuv420p"},
             {"codec_type": "audio", "codec_name": "aac"}]}
         audio = self.repo.job_dir(self.job) / "work/audio.wav"
+        audio.write_bytes(b"audio")
+        (audio.parent / "processed-audio.wav").write_bytes(b"processed")
+        (audio.parent / "timeline-map.json").write_text("[]")
         with ExitStack() as stack:
             stack.enter_context(patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"))
             stack.enter_context(patch("media_worker.worker.probe", return_value=metadata))

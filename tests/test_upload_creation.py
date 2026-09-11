@@ -41,6 +41,29 @@ class UploadCreationTests(unittest.TestCase):
         self.assertEqual(len(self.repo.list()), 1)
         self.guard.assert_can_accept_upload.assert_called_once_with(6)
 
+    def test_retry_preserves_files_and_resets_terminal_state(self):
+        job_id = self.client.post("/api/uploads", json=self.payload).json()["job_id"]
+        record = self.repo.read(job_id)
+        source = self.repo.source_path(record)
+        source.write_bytes(b"source")
+        self.repo.update_upload_progress(job_id, 6)
+        self.repo.update_status(job_id, JobStatus.FAILED, error="429", metadata={"cancel_requested": True})
+        result = self.client.post(f"/api/jobs/{job_id}/retry")
+        self.assertEqual(result.status_code, 200, result.text)
+        record = self.repo.read(job_id)
+        self.assertEqual(record.status, JobStatus.QUEUED)
+        self.assertIsNone(record.error)
+        self.assertIsNone(record.completed_at)
+        self.assertFalse(record.metadata["cancel_requested"])
+        self.assertEqual(source.read_bytes(), b"source")
+        self.assertEqual(self.client.post(f"/api/jobs/{job_id}/retry").status_code, 409)
+
+    def test_retry_rejects_incomplete_upload(self):
+        job_id = self.client.post("/api/uploads", json=self.payload).json()["job_id"]
+        self.repo.update_status(job_id, JobStatus.CANCELLED)
+        self.assertEqual(self.client.post(f"/api/jobs/{job_id}/retry").status_code, 409)
+        self.assertEqual(self.repo.read(job_id).status, JobStatus.CANCELLED)
+
     def test_changed_payload_conflicts_without_mutation(self):
         first = self.client.post("/api/uploads", json=self.payload).json()
         for changes in ({"filename": "other.mp4"}, {"size": 7}, {"source_language": "en"},

@@ -25,7 +25,7 @@ from app.services.result_response import ResultResponse
 from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
-from video_service.capacity import assert_capacity
+from video_service.capacity import assert_capacity, remaining_reservations, used_bytes
 from video_service.review import read_draft, write_draft
 
 def authorize_job_request(request: Request):
@@ -263,6 +263,26 @@ def delete_job(job_id: str) -> None:
         if repository.preserve_artifacts:
             raise HTTPException(status_code=409, detail="개발 중 파일 보존 설정이 켜져 있어 삭제할 수 없습니다.")
         repository.delete_job_dir(job_id)
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_job(job_id: str) -> dict[str, str]:
+    with job_lock(repository, job_id, "execution"), job_lock(repository, "0" * 32), job_lock(repository, job_id):
+        record = _read_job_or_404(job_id)
+        if record.status not in {JobStatus.FAILED, JobStatus.CANCELLED}:
+            raise HTTPException(status_code=409, detail="실패하거나 중단된 작업만 재시도할 수 있습니다.")
+        source = repository.source_path(record)
+        if not source.is_file() or source.stat().st_size != record.expected_size or record.uploaded_bytes != record.expected_size:
+            raise HTTPException(status_code=409, detail="완전한 원본 파일이 없어 업로드를 다시 진행해야 합니다.")
+        reserved = record.metadata.get("reserved_bytes", record.expected_size * 4)
+        assert_capacity(repository.storage_root, settings.service_quota_bytes, settings.min_free_space_bytes,
+            remaining_reservations(repository) + max(0, reserved - used_bytes(repository.job_dir(job_id))))
+        record.metadata.update(cancel_requested=False, interrupted=False, cleanup_pending=False,
+            cleanup_error=None, stage_progress=None, retry_count=record.metadata.get("retry_count", 0) + 1)
+        record.completed_at = None
+        repository.save(record)
+        repository.update_status(job_id, JobStatus.QUEUED, message="보존된 체크포인트에서 재시도합니다.")
+        return {"status": "queued"}
 
 
 @router.get("/jobs/{job_id}/results/{filename}")

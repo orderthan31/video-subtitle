@@ -97,13 +97,16 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.record.options.additional_languages = ["ja", "es"]
         self.repo.save(self.record)
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        provider = Mock()
+        provider = Mock(transcription_model="test-stt", translation_model="test-translation", audio_filter_model="test-filter")
         provider.detect_vocalizations.return_value = {"removals": [{"start": 2.3, "end": 2.7, "kind": "breath"}],
             "protected": [{"start": 12, "end": 13}]}
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Original speech.")]
         provider.translate.side_effect = lambda segments, language, check: [s.with_text(f"Translated speech. {language}") for s in segments]
         worker = Worker(self.repo, provider)
         audio = self.repo.job_dir(self.job) / "work/audio.wav"
+        audio.write_bytes(b"audio")
+        (audio.parent / "processed-audio.wav").write_bytes(b"processed")
+        (audio.parent / "timeline-map.json").write_text("[]")
         metadata = {"duration": 14, "streams": [
             {"codec_type": "video", "avg_frame_rate": "30/1", "width": 640, "height": 360,
              "codec_name": "hevc", "codec_tag_string": "hvc1", "pix_fmt": "yuv420p"},
@@ -166,10 +169,13 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.record.options.additional_languages = ["ja"]
         self.repo.save(self.record)
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        provider = Mock()
+        provider = Mock(transcription_model="test-stt", translation_model="test-translation", audio_filter_model="test-filter")
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Speech")]
         provider.translate.side_effect = [[TranscriptSegment(0, 1, "Primary")], RuntimeError("additional translation failed")]
         audio = self.repo.job_dir(self.job) / "work/audio.wav"
+        audio.write_bytes(b"audio")
+        (audio.parent / "processed-audio.wav").write_bytes(b"processed")
+        (audio.parent / "timeline-map.json").write_text("[]")
         metadata = {"duration": 2, "streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}
         with ExitStack() as stack:
             stack.enter_context(patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"))

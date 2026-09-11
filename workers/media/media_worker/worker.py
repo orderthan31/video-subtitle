@@ -13,12 +13,13 @@ from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.storage import remove_path_inside, write_json_atomic
 from video_service.subtitles import segments_to_srt, segment_subtitles
 from video_service.sami import segments_to_sami
-from video_service.timeline import map_segment_to_original
+from video_service.timeline import map_segment_to_original, TimelineSpan
 from video_service.transcript import filter_transcript_segments, TranscriptSegment
 from .media import probe, extract_audio, preprocess_audio, encoding_args, select_encoder
 from .process import run_process, Cancelled
 from .providers import GeminiProvider
 from .llm_trace import capture_calls
+from .checkpoints import Checkpoints
 from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
@@ -110,6 +111,15 @@ class Worker:
                 with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
                     encoder = select_encoder(work, check, video_codec=record.options.video_codec)
                 source = repo.source_path(record).resolve()
+                checkpoints = Checkpoints(work, {"version": 1, "source_size": source.stat().st_size,
+                    "source_mtime": source.stat().st_mtime_ns, "options": record.options.to_dict(),
+                    "stt": getattr(self.provider, "transcription_model", None),
+                    "translation": getattr(self.provider, "translation_model", None),
+                    "filter_model": getattr(self.provider, "audio_filter_model", None),
+                    "filter_enabled": os.getenv("VOCALIZATION_FILTER_ENABLED", "false")},
+                    lambda size: assert_capacity(repo.storage_root,
+                        int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
+                        int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size))
                 metadata = probe(source, work, check)
                 videos = [stream for stream in metadata["streams"] if stream["codec_type"] == "video"]
                 if not videos or not any(s["codec_type"] == "audio" for s in metadata["streams"]):
@@ -125,7 +135,8 @@ class Worker:
                         for name, cues in draft["tracks"].items()}
                 else:
                     self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
-                    audio = extract_audio(source, work, check)
+                    audio = work / checkpoints.run("extract", lambda: extract_audio(source, work, check).name,
+                        files=("audio.wav",))
                     self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)
                     vocalizations = []
                     protected_audio = []
@@ -133,17 +144,24 @@ class Worker:
                     if filter_enabled not in {"true", "false"}:
                         raise ValueError("VOCALIZATION_FILTER_ENABLED must be true or false")
                     if filter_enabled == "true" and record.options.audio_filter != "off":
-                        analysis = self.provider.detect_vocalizations(audio, record.options.source_language,
-                            check, strength=record.options.audio_filter)
+                        analysis = checkpoints.run("vocalizations", lambda: self.provider.detect_vocalizations(
+                            audio, record.options.source_language, check, strength=record.options.audio_filter))
                         vocalizations, protected_audio = analysis["removals"], analysis["protected"]
                         write_json_atomic(work / "vocalization-analysis.json", analysis)
-                    audio, spans = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter,
-                        vocalizations=vocalizations, protected_audio=protected_audio)
+                    def prepare_audio():
+                        processed, timeline = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter,
+                            vocalizations=vocalizations, protected_audio=protected_audio)
+                        return {"audio": processed.name, "spans": [span.to_dict() for span in timeline]}
+                    prepared = checkpoints.run("preprocess", prepare_audio,
+                        files=("processed-audio.wav", "timeline-map.json"))
+                    audio = work / prepared["audio"]
+                    spans = [TimelineSpan.from_dict(span) for span in prepared["spans"]]
                     self.transition(job_id, JobStatus.PREPROCESSING_AUDIO, metadata={
                         "vocalization_filter_enabled": filter_enabled == "true" and record.options.audio_filter != "off",
                         "vocalization_removal_count": len(vocalizations)})
                     self.transition(job_id, JobStatus.TRANSCRIBING)
-                    segments = self.provider.transcribe(audio, record.options.source_language, check, spans=spans)
+                    segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe", lambda: [
+                        s.to_dict() for s in self.provider.transcribe(audio, record.options.source_language, check, spans=spans)])]
                     segments = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in segments]
                     self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
                     segments = filter_transcript_segments(segments, record.options.audio_filter)
@@ -153,7 +171,8 @@ class Worker:
                         line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)}
                     for index, language in enumerate(languages):
                         check()
-                        translated = self.provider.translate(segments, language, check)
+                        translated = [TranscriptSegment.from_dict(item) for item in checkpoints.run("translate-" + language,
+                            lambda: [s.to_dict() for s in self.provider.translate(segments, language, check)])]
                         stem = "translated" if index == 0 else f"translated.{language}"
                         write_json_atomic(work / f"{stem}.json", [s.to_dict() for s in translated])
                         subtitle_sets[stem] = segment_subtitles(translated,
@@ -224,6 +243,7 @@ class Worker:
                     repo.update_status(job_id, JobStatus.CANCELLED if cancelled else JobStatus.FAILED,
                         error=None if cancelled else str(exc), metadata={"stage_progress": None,
                             "interrupted": isinstance(exc, WorkerStopping),
+                            "failed_stage": current.status.value,
                             "cleanup_pending": cleanup_error is not None, "cleanup_error": cleanup_error})
                 if isinstance(exc, KeyboardInterrupt):
                     raise

@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import json
+import hashlib
 import os
 from uuid import uuid4
 
@@ -60,3 +61,19 @@ def begin_call(model, attempt, payload, secret):
 def finish_call(folder, secret, **data):
     if folder is not None:
         save_trace(folder / "response.json", {"received_at": datetime.now(timezone.utc).isoformat(), **data}, secret)
+
+
+def cached_result(identity, compute):
+    destination = _destination.get()
+    if destination is None:
+        return compute()
+    _, directory = destination
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    path = directory / "cache" / (key + ".json")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))["result"]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    result = compute()
+    save_trace(path, {"result": result}, "")
+    return result
