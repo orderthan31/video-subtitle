@@ -53,6 +53,38 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
             await self.request()
         self.assertEqual(self.client.post.call_count, 1)
 
+    def transcription_response(self, start, end):
+        return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {
+            "parts": [{"audioTranscription": {"words": [{"word": "Private speech.",
+                "startOffset": start, "endOffset": end}]}}]}}]})
+
+    async def test_invalid_word_timing_retries_same_audio_without_dropping_speech(self):
+        self.client.post.side_effect = [self.transcription_response("1s", "1s"),
+            self.transcription_response("1s", "0.5s"), self.transcription_response("1s", "2s")]
+        with patch("media_worker.providers.asyncio.sleep", new_callable=AsyncMock):
+            result = await self.provider._request([{"text": "audio placeholder"}], None,
+                lambda: None, "test-model", {"wordTimestamp": True})
+        self.assertEqual(result[0]["text"], "Private speech.")
+        self.assertEqual((result[0]["start"], result[0]["end"]), (1, 2))
+        calls = self.client.post.call_args_list
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all(call.kwargs["json"] == calls[0].kwargs["json"] for call in calls))
+
+    async def test_persistent_invalid_timing_fails_bounded_without_private_text(self):
+        self.client.post.return_value = self.transcription_response("1s", "1s")
+        with patch("media_worker.providers.asyncio.sleep", new_callable=AsyncMock):
+            with self.assertRaisesRegex(ValueError, "after 3 attempts:.*zero-duration") as error:
+                await self.provider._request([], None, lambda: None, "test-model", {"wordTimestamp": True})
+        self.assertNotIn("Private speech", str(error.exception))
+        self.assertEqual(self.client.post.call_count, 3)
+
+    async def test_invalid_timing_retry_can_be_cancelled(self):
+        self.client.post.return_value = self.transcription_response("1s", "1s")
+        with patch("media_worker.providers.wait_for_retry", side_effect=Cancelled):
+            with self.assertRaises(Cancelled):
+                await self.provider._request([], None, lambda: None, "test-model", {"wordTimestamp": True})
+        self.assertEqual(self.client.post.call_count, 1)
+
     async def test_incomplete_output_is_not_retried(self):
         self.client.post.return_value = httpx.Response(200, json={"candidates": [{"finishReason": "MAX_TOKENS"}]})
         with self.assertRaisesRegex(ValueError, "incomplete or blocked"):

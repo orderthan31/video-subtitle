@@ -2,6 +2,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -59,7 +60,15 @@ class GeminiProvider:
                 if not candidates or candidates[0].get("finishReason") != "STOP":
                     raise ValueError("Gemini returned incomplete or blocked output")
                 if transcription_config is not None:
-                    return parse_word_transcriptions(candidates[0]["content"]["parts"], group=False)
+                    try:
+                        return parse_word_transcriptions(candidates[0]["content"]["parts"], group=False)
+                    except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as error:
+                        reason = str(error) if isinstance(error, WordTimestampError) else "malformed word annotations"
+                        if attempt == 2:
+                            raise ValueError(f"STT word timing validation failed after 3 attempts: {reason}") from None
+                        logging.warning("Retrying STT window after invalid timing (%s), attempt %d/3", reason, attempt + 2)
+                        await wait_for_retry(2**attempt, check)
+                        continue
                 text = "".join(part.get("text", "") for part in candidates[0]["content"]["parts"])
                 return json.loads(text)
 
@@ -173,6 +182,10 @@ def transcription_windows(total, rate, spans):
             yield first, max(start, first - rate), min(end, first + rate * 61), span
 
 
+class WordTimestampError(ValueError):
+    pass
+
+
 def parse_word_transcriptions(parts, *, group=True):
     words = []
     for part in parts:
@@ -182,10 +195,16 @@ def parse_word_transcriptions(parts, *, group=True):
             start = float(str(word["startOffset"]).removesuffix("s"))
             end = float(str(word["endOffset"]).removesuffix("s"))
             text = word["word"].strip()
-            if not (math.isfinite(start) and math.isfinite(end) and 0 <= start < end):
-                raise ValueError("Invalid word timestamps")
             if not text:
                 continue
+            if not (math.isfinite(start) and math.isfinite(end)):
+                raise WordTimestampError("Invalid word timestamps: non-finite offset")
+            if start < 0:
+                raise WordTimestampError("Invalid word timestamps: negative start")
+            if start == end:
+                raise WordTimestampError("Invalid word timestamps: zero-duration word")
+            if start > end:
+                raise WordTimestampError("Invalid word timestamps: reversed interval")
             words.append({"start": start, "end": end, "text": text, "speaker": speaker})
     if not words and any(part.get("text", "").strip() for part in parts):
         raise ValueError("Transcription returned text without word timestamps")
