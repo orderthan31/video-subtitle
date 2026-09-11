@@ -8,3 +8,11 @@ data
 **/dist
 **/__pycache__
 **/*.pyc
+.codex
+.agents
+**/.env
+**/.env.*
+**/*.egg-info
+**/.pytest_cache
+**/coverage
+**/.vite

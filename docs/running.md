@@ -67,26 +67,26 @@ Linux에서는 기존 PYTHONPATH 설정 후 `python -m media_worker.worker --col
 현재 작업 환경에는 Docker가 없어 아래 구성은 파일 형식 검사만 완료했다.
 실제 이미지 빌드, 컨테이너 기동 및 GPU 기동 검증은 남아 있다.
 
-Docker Engine/Compose를 준비하고 루트 `.env`에 키를 설정한 뒤 실행한다.
+클론 후 환경 파일 준비부터 CPU/GPU 실행, 이미지 자체 검사까지는 [Docker 실행 가이드](docker.md)를 따른다.
+로컬 직접 실행의 `.env`와 분리한 `.env.docker`에 키를 설정한다.
 
 ```sh
-docker compose up --build -d
-docker compose ps
-docker compose logs --tail=100 worker
+docker compose --env-file .env.docker up --build -d --wait
+docker compose --env-file .env.docker ps
+docker compose --env-file .env.docker logs --tail=100 worker
 ```
 
-웹 주소는 http://127.0.0.1:8080 이다. API 8000 포트를 사용하는 로컬 서버와 동시에 실행하지 않는다.
-영상은 `jobs` named volume에 보관한다. 기본 구성은 GPU 접근을 요청하지 않으며,
-인코더 검사 실패 시 설정에 따라 소프트웨어로 전환한다.
+웹 주소는 http://127.0.0.1:8080 이다. 포트가 겹치면 `DOCKER_WEB_PORT`와 `DOCKER_API_PORT`를 변경한다.
+영상은 `jobs` named volume에 보관한다. 기본 구성은 GPU 접근을 요청하지 않고 CPU 인코더를 사용한다.
 
 NVIDIA Container Toolkit 및 호환 드라이버가 준비된 호스트에서는 다음 구성을 사용한다.
 GPU 구성은 fallback을 끄므로 GPU 실행 실패를 명확히 확인할 수 있다.
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
+docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.gpu.yml up --build -d --wait
 ```
 
-일반 종료는 `docker compose down`이다. `-v`는 영상 저장 볼륨까지 삭제하므로 보관할 결과가 있을 때 사용하지 않는다.
+일반 종료는 `docker compose --env-file .env.docker down`이다. `-v`는 영상 저장 볼륨까지 삭제하므로 보관할 결과가 있을 때 사용하지 않는다.
 키는 Worker 환경에만 전달하고 빌드 컨텍스트에서는 `.env`와 실행 데이터를 제외한다.
 
 GPU 설정 근거: [Docker 공식 GPU Compose 문서](https://docs.docker.com/compose/how-tos/gpu-support/).
@@ -94,7 +94,7 @@ GPU 설정 근거: [Docker 공식 GPU Compose 문서](https://docs.docker.com/co
 
 Worker는 SIGTERM, SIGINT 및 Windows SIGBREAK를 받으면 새 작업을 시작하지 않는다. 현재 작업의 FFmpeg 자식 프로세스를 종료하고 종료를 기다리며, 진행 중 Gemini 요청은 로컬 요청 태스크를 취소·회수한다. 이미 원격 서비스가 수행한 처리나 과금까지 취소됨을 보장하지는 않는다.
 
-처리 중이던 작업은 `FAILED`, `metadata.interrupted=true`, `Worker shutting down; upload again`을 기록한 뒤 미디어를 정리한다. 아직 시작하지 않은 `QUEUED` 작업은 입력 파일과 함께 보존한다. 사용자가 취소 요청도 보낸 작업은 `CANCELLED`가 우선한다. 파일 정리가 실패하면 다음 GC에서 재시도한다.
+처리 중이던 작업은 `FAILED`, `metadata.interrupted=true`를 기록하고 미디어와 체크포인트를 보존한다. 아직 시작하지 않은 `QUEUED` 작업도 입력 파일과 함께 보존한다. 사용자가 취소 요청도 보낸 작업은 `CANCELLED`가 우선한다. 재시도 버튼으로 중단된 단계부터 다시 처리할 수 있다.
 
 Compose의 Worker 종료 유예는 60초다. 파일시스템 응답 정지나 강제 종료(SIGKILL, Windows 강제 프로세스 종료)는 정상 정리를 보장하지 못하므로 다음 Worker 실행의 복구 GC가 필요하다. 실제 Docker 환경의 종료 테스트는 아직 수행하지 않았다.
 ## Gemini 재시도

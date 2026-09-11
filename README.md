@@ -12,7 +12,8 @@
 
 ## 현재 개발 상태
 
-요구사항 문서와 API 기반을 구현했습니다. 전체 영상 처리 E2E는 아직 구현되지 않았습니다.
+업로드, Gemini 전사·번역, SRT 생성 및 영상 인코딩까지 구현하고 실제 영상으로 검증 중입니다.
+기능과 검증 범위는 [개발 현황](docs/development-status.md)을 참고합니다.
 
 - Resumable chunk upload API
 - 파일시스템 기반 Job 저장소
@@ -22,9 +23,31 @@
 - 명시적 비발화 라벨만 제거하는 Transcript 후처리 필터
 - 무음 제거 경계에서 원본 시작/종료 시간을 구분하는 Timeline Mapping
 - SRT 생성
-- 업로드, 취소, 삭제 API 및 핵심 처리 회귀 테스트 10개
+- 직렬 업로드 큐, 수동 처리 시작, 중단 단계 재시도 및 파일 보존
+- 전사·번역 3병렬 처리와 구간별 진행률
 
 React UI와 독립 Worker, FFmpeg 파이프라인 및 Gemini 어댑터 초안을 추가했습니다. 실제 미디어 E2E 검증과 운영 보완은 진행 중입니다. 단계별 검증 및 남은 작업은 [개발 현황](docs/development-status.md)을 기준으로 확인합니다.
+
+## Docker로 실행
+
+호스트에 FFmpeg/Python/Node를 설치하지 않고 실행할 수 있습니다. Docker와 Git을 준비한 뒤:
+
+```sh
+git clone https://github.com/orderthan31/video-subtitle.git
+cd video-subtitle
+cp .env.docker.example .env.docker
+```
+
+Windows에서는 `cp` 대신 `Copy-Item`을 사용할 수 있습니다. `.env.docker`에 본인의
+`GEMINI_API_KEY`를 설정한 다음 실행합니다. 기존 설정 파일은 덮어쓰지 마세요.
+
+```sh
+docker compose --env-file .env.docker up --build -d --wait
+```
+
+웹: http://localhost:8080. 기본은 CPU 인코딩이며 GPU 설정, 포트 변경, 볼륨 보관,
+인증 및 검증 범위는 [Docker 실행 가이드](docs/docker.md)에 정리했습니다.
+현재 개발 PC에는 Docker가 없어 실제 컨테이너 빌드·기동 검증은 별도입니다.
 
 ## 로컬 실행
 
@@ -61,4 +84,4 @@ API와 Worker는 루트 `.env`를 읽습니다. 기존 프로세스 환경변수
 
 Windows에서는 `scripts/setup-ffmpeg.ps1`로 프로젝트 `.tools`에 FFmpeg를 준비할 수 있습니다. Worker는 PATH에 도구가 없으면 이 경로를 찾습니다. `ALLOW_SOFTWARE_ENCODER_FALLBACK=true`이면 GPU 사전 검사 실패 시 libx265로 전환합니다.
 
-현재 API는 인증이 없는 로컬 개발용입니다. 잠금 파일은 저장소의 `.locks`에 유지되며 프로세스가 종료되면 OS 잠금은 해제됩니다. API와 Worker는 동일한 잠금 규약을 사용합니다. 접수 시 활성 작업의 예약 용량을 합산하고 Worker는 처리 중 실제 사용량을 검사합니다. 예약량은 원본의 4배 추정치이며 상세 제한은 개발 현황 문서에 기록합니다.
+기본 실행은 로컬 익명 모드이며 선택적 계정 인증을 지원합니다. 외부 공개 전에는 HTTPS와 인증 설정이 필요합니다. 잠금 파일은 저장소의 `.locks`에 유지되며 프로세스가 종료되면 OS 잠금은 해제됩니다. API와 Worker는 동일한 잠금 규약을 사용합니다. 접수 시 활성 작업의 예약 용량을 합산하고 Worker는 처리 중 실제 사용량을 검사합니다. 예약량은 원본의 4배 추정치이며 상세 제한은 개발 현황 문서에 기록합니다.

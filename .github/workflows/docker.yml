@@ -1,0 +1,31 @@
+name: Docker CPU smoke test
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # No jobs are submitted and no paid API calls are made.
+      GEMINI_API_KEY: docker-smoke-not-a-real-key
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose without exposing environment values
+        run: docker compose --env-file .env.docker.example config --quiet
+      - name: Build and start isolated services
+        run: docker compose --env-file .env.docker.example up --build -d --wait
+      - name: Verify reverse proxy and runtime
+        run: |
+          curl --fail http://127.0.0.1:8080/api/health
+          docker compose --env-file .env.docker.example exec -T worker python scripts/check-container.py
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose --env-file .env.docker.example logs --tail=100
+      - name: Stop containers
+        if: always()
+        run: docker compose --env-file .env.docker.example down

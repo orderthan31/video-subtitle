@@ -12,5 +12,6 @@ data/
 .tools/
 .env.*
 !.env.example
+!.env.docker.example
 apps/web/.vite/
 apps/web/coverage/
