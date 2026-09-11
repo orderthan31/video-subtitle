@@ -4,7 +4,7 @@ export const base = import.meta.env.VITE_API_BASE_URL || '/api';
 export type Job = {
   job_id: string; status: string; original_filename: string; expected_size: number; uploaded_bytes: number;
   target_language: string; quality_profile: string; created_at: string; completed_at: string | null;
-  source_language: string; video_codec?: string; subtitle_mode?: string; resolution?: string;
+  source_language: string; video_codec?: string; subtitle_mode?: string; resolution?: string; additional_languages?: string[];
   error: string | null; status_message?: string | null;
   metadata: {cancel_requested?: boolean; duration?: number; stage_progress?: number | null; result_files?: string[];
     results_expired_at?: string; upload_expired_at?: string};

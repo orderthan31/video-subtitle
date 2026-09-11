@@ -56,10 +56,12 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertFalse(self.repo.source_path(self.record).exists())
 
     def test_completed_pipeline_preserves_original_and_translated_subtitles(self):
+        self.record.options.additional_languages = ["ja", "es"]
+        self.repo.save(self.record)
         self.repo.update_status(self.job, JobStatus.QUEUED)
         provider = Mock()
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Original speech.")]
-        provider.translate.side_effect = lambda segments, language, check: [s.with_text("Translated speech.") for s in segments]
+        provider.translate.side_effect = lambda segments, language, check: [s.with_text(f"Translated speech. {language}") for s in segments]
         worker = Worker(self.repo, provider)
         audio = self.repo.job_dir(self.job) / "work/audio.wav"
         metadata = {"duration": 14, "streams": [
@@ -87,6 +89,15 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertIn("Original speech.", original)
         self.assertNotIn("Translated speech.", original)
         self.assertIn("Translated speech.", translated)
+        self.assertIn("speech. ko", translated)
+        provider.transcribe.assert_called_once()
+        self.assertEqual([call.args[1] for call in provider.translate.call_args_list], ["ko", "ja", "es"])
+        for language in ("ja", "es"):
+            text = (output / f"translated.{language}.srt").read_text(encoding="utf-8")
+            self.assertIn(f"speech. {language}", text)
+            self.assertIn("00:00:12,000 --> 00:00:13,000", text)
+            self.assertIn(f"translated.{language}.srt", record.metadata["result_files"])
+            self.assertTrue((output / f"translated.{language}.smi").exists())
         self.assertIn("original.srt", record.metadata["result_files"])
         self.assertIn("translated.smi", record.metadata["result_files"])
         self.assertIn('Start="12000"', (output / "translated.smi").read_text(encoding="utf-8"))
@@ -105,6 +116,29 @@ class WorkerLifecycleTests(unittest.TestCase):
         extraction.assert_not_called()
         self.assertEqual(self.repo.read(self.job).status, JobStatus.CANCELLED)
         self.assertFalse(self.repo.source_path(self.record).exists())
+
+    def test_additional_translation_failure_fails_entire_job_and_cleans_media(self):
+        self.record.options.additional_languages = ["ja"]
+        self.repo.save(self.record)
+        self.repo.update_status(self.job, JobStatus.QUEUED)
+        provider = Mock()
+        provider.transcribe.return_value = [TranscriptSegment(0, 1, "Speech")]
+        provider.translate.side_effect = [[TranscriptSegment(0, 1, "Primary")], RuntimeError("additional translation failed")]
+        audio = self.repo.job_dir(self.job) / "work/audio.wav"
+        metadata = {"duration": 2, "streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}
+        with ExitStack() as stack:
+            stack.enter_context(patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"))
+            stack.enter_context(patch("media_worker.worker.probe", return_value=metadata))
+            stack.enter_context(patch("media_worker.worker.extract_audio", return_value=audio))
+            stack.enter_context(patch("media_worker.worker.preprocess_audio", return_value=(audio,
+                build_timeline_from_kept_intervals([(0, 2)]))))
+            encode = stack.enter_context(patch("media_worker.worker.run_process"))
+            Worker(self.repo, provider).process(self.job)
+        encode.assert_not_called()
+        record = self.repo.read(self.job)
+        self.assertEqual(record.status, JobStatus.FAILED)
+        self.assertIn("additional translation failed", record.error)
+        self.assertEqual({p.name for p in self.repo.job_dir(self.job).iterdir()}, {"job.json"})
 
     def test_collection_skips_live_execution(self):
         self.repo.update_status(self.job, JobStatus.ENCODING)

@@ -124,23 +124,32 @@ class Worker:
                 segments = filter_transcript_segments(segments)
                 write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
                 self.transition(job_id, JobStatus.TRANSLATING)
-                translated = self.provider.translate(segments, record.options.target_language, check)
-                write_json_atomic(work / "translated.json", [s.to_dict() for s in translated])
+                languages = [record.options.target_language, *record.options.additional_languages]
+                translations = {}
+                for language in languages:
+                    check()
+                    translations[language] = self.provider.translate(segments, language, check)
                 self.transition(job_id, JobStatus.GENERATING_SUBTITLE)
-                cues = segment_subtitles(translated, line_width=24 if record.options.target_language in {"ko", "ja", "zh"} else 42)
-                validate_cues(cues, metadata["duration"])
-                srt = segments_to_srt(cues)
-                if not srt.strip():
-                    raise ValueError("No speech subtitles detected")
                 output = repo.job_dir(job_id) / "output"
                 output.mkdir(exist_ok=True)
-                (output / "translated.srt").write_text(srt, encoding="utf-8")
-                (output / "translated.smi").write_text(segments_to_sami(cues, record.options.target_language), encoding="utf-8")
+                result_files = ["final.mp4", "translated.srt", "original.srt", "translated.smi"]
+                for index, language in enumerate(languages):
+                    check()
+                    translated = translations[language]
+                    stem = "translated" if index == 0 else f"translated.{language}"
+                    write_json_atomic(work / f"{stem}.json", [s.to_dict() for s in translated])
+                    cues = segment_subtitles(translated, line_width=24 if language.split("-")[0] in {"ko", "ja", "zh"} else 42)
+                    validate_cues(cues, metadata["duration"])
+                    srt = segments_to_srt(cues)
+                    (output / f"{stem}.srt").write_text(srt, encoding="utf-8")
+                    (output / f"{stem}.smi").write_text(segments_to_sami(cues, language), encoding="utf-8")
+                    (work / f"{stem}.srt").write_text(srt, encoding="utf-8")
+                    if index:
+                        result_files.extend([f"{stem}.srt", f"{stem}.smi"])
                 original_cues = segment_subtitles(segments,
                     line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
                 validate_cues(original_cues, metadata["duration"])
                 (output / "original.srt").write_text(segments_to_srt(original_cues), encoding="utf-8")
-                (work / "translated.srt").write_text(srt, encoding="utf-8")
                 self.transition(job_id, JobStatus.ENCODING, message="인코딩 슬롯 대기 중")
                 target = (output / "final.mp4").resolve()
                 software = encoder in {"libx265", "libx264"}
@@ -150,20 +159,21 @@ class Worker:
                     progress_duration = metadata["duration"]
                     run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software,
                         record.options.video_codec, record.options.subtitle_mode, record.options.target_language,
-                        record.options.resolution),
+                        record.options.resolution, record.options.additional_languages),
                         cwd=work, log_name="encode.log", check=check)
                     progress_path = None
                 self.transition(job_id, JobStatus.VALIDATING)
                 final = probe(target, work, check)
                 validate_output(metadata, final, target.stat().st_size, record.options.video_codec,
-                    record.options.subtitle_mode, record.options.resolution)
+                    record.options.subtitle_mode, record.options.resolution,
+                    subtitle_count=len(languages))
                 validate_decodable(target, work, check)
                 self.transition(job_id, JobStatus.CLEANING)
                 size = target.stat().st_size
                 self.cleanup(job_id, keep_output=True)
                 self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size,
                     "duration": final["duration"], "encoder": encoder,
-                    "result_files": ["final.mp4", "translated.srt", "original.srt", "translated.smi"]})
+                    "result_files": result_files})
             except (Exception, KeyboardInterrupt) as exc:
                 cancelled = isinstance(exc, (Cancelled, KeyboardInterrupt))
                 cleanup_error = None

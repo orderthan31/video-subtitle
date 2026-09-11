@@ -106,8 +106,13 @@ def preprocess_audio(source, work, check=lambda: None):
 
 
 def encoding_args(source, destination, video_stream, quality="balanced", software=False, video_codec="hevc",
-                  subtitle_mode="burn", target_language="ko", resolution="original"):
+                  subtitle_mode="burn", target_language="ko", resolution="original", additional_languages=None):
     from .validation import output_dimensions
+    from video_service.models import validate_additional_languages
+
+    additional_languages = [] if additional_languages is None else additional_languages
+    validate_additional_languages(target_language, additional_languages)
+    languages = [target_language, *additional_languages]
 
     if resolution not in {"original", "1080p", "720p"}:
         raise ValueError("Unsupported resolution")
@@ -122,16 +127,20 @@ def encoding_args(source, destination, video_stream, quality="balanced", softwar
     args = [executable("ffmpeg"), "-nostdin", "-y", "-i", source]
     if subtitle_mode == "soft":
         args += ["-i", "translated.srt"]
+        for language in additional_languages:
+            args += ["-i", f"translated.{language}.srt"]
     args += ["-map", "0:v:0", "-map", "0:a:0"]
     filters = []
     if resolution != "original":
         width, height = output_dimensions(video_stream, resolution)
         filters.append(f"scale={width}:{height}:flags=lanczos")
     if subtitle_mode == "soft":
-        language = {"ko": "kor", "en": "eng", "ja": "jpn", "zh": "zho", "es": "spa"}.get(
-            target_language.split("-")[0], "und")
-        args += ["-map", "1:s:0", "-c:s", "mov_text", "-disposition:s:0", "default",
-            "-metadata:s:s:0", f"language={language}", "-metadata:s:s:0", f"handler_name={target_language}"]
+        args += ["-c:s", "mov_text"]
+        for index, target in enumerate(languages):
+            language = {"ko": "kor", "en": "eng", "ja": "jpn", "zh": "zho", "es": "spa"}.get(
+                target.split("-")[0], "und")
+            args += ["-map", f"{index + 1}:s:0", f"-disposition:s:{index}", "default" if index == 0 else "0",
+                f"-metadata:s:s:{index}", f"language={language}", f"-metadata:s:s:{index}", f"handler_name={target}"]
     else:
         filters.append("subtitles=translated.srt")
     if filters:

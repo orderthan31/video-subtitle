@@ -58,9 +58,10 @@ def create_upload(payload: UploadCreateRequest) -> UploadCreateResponse:
             if record is not None:
                 actual = (record.original_filename, record.expected_size, record.options.source_language,
                     record.options.target_language, record.options.quality_profile, record.options.video_codec,
-                    record.options.subtitle_mode, record.options.resolution)
+                    record.options.subtitle_mode, record.options.resolution, record.options.additional_languages)
                 expected = (payload.filename, payload.size, payload.source_language,
-                    payload.target_language, payload.quality_profile, payload.video_codec, payload.subtitle_mode, payload.resolution)
+                    payload.target_language, payload.quality_profile, payload.video_codec, payload.subtitle_mode,
+                    payload.resolution, payload.additional_languages)
                 if actual != expected:
                     raise HTTPException(status_code=409, detail="생성 요청 식별자가 다른 업로드 설정에 사용되었습니다.")
             else:
@@ -74,6 +75,7 @@ def create_upload(payload: UploadCreateRequest) -> UploadCreateResponse:
                     video_codec=payload.video_codec,
                     subtitle_mode=payload.subtitle_mode,
                     resolution=payload.resolution,
+                    additional_languages=payload.additional_languages,
                     metadata={"upload_request_id": request_id} if request_id else None,
                 )
     except StorageLimitError as exc:

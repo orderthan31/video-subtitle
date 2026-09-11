@@ -30,6 +30,7 @@ class FilesystemJobRepository:
         video_codec: str = "hevc",
         subtitle_mode: str = "burn",
         resolution: str = "original",
+        additional_languages: list[str] | None = None,
     ) -> JobRecord:
         job_id = uuid4().hex
         source_filename = f"source{safe_suffix(original_filename)}"
@@ -43,7 +44,8 @@ class FilesystemJobRepository:
             original_filename=original_filename,
             source_filename=source_filename,
             expected_size=expected_size,
-            options=JobOptions(source_language, target_language, quality_profile, video_codec, subtitle_mode, resolution),
+            options=JobOptions(source_language, target_language, quality_profile, video_codec, subtitle_mode, resolution,
+                list(additional_languages or [])),
             metadata=dict(metadata or {}),
         )
         self.save(record)

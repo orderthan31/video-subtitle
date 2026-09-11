@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, UUID4
+from pydantic import BaseModel, Field, UUID4, model_validator
 
-from video_service.models import JobRecord, JobStatus, QualityProfile
+from video_service.models import JobRecord, JobStatus, QualityProfile, validate_additional_languages
 
 
 class UploadCreateRequest(BaseModel):
@@ -17,6 +17,12 @@ class UploadCreateRequest(BaseModel):
     video_codec: Literal["hevc", "h264"] = "hevc"
     subtitle_mode: Literal["burn", "soft"] = "burn"
     resolution: Literal["original", "1080p", "720p"] = "original"
+    additional_languages: list[str] = Field(default_factory=list, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_languages(self):
+        validate_additional_languages(self.target_language, self.additional_languages)
+        return self
 
 
 class UploadCreateResponse(BaseModel):
@@ -59,6 +65,7 @@ class JobResponse(BaseModel):
     video_codec: str
     subtitle_mode: str
     resolution: str
+    additional_languages: list[str]
     status_message: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -84,6 +91,7 @@ def job_to_response(record: JobRecord) -> JobResponse:
         video_codec=record.options.video_codec,
         subtitle_mode=record.options.subtitle_mode,
         resolution=record.options.resolution,
+        additional_languages=record.options.additional_languages,
         status_message=record.status_message,
         error=record.error,
         metadata=record.metadata,

@@ -45,7 +45,7 @@ class UploadCreationTests(unittest.TestCase):
         first = self.client.post("/api/uploads", json=self.payload).json()
         for changes in ({"filename": "other.mp4"}, {"size": 7}, {"source_language": "en"},
                         {"target_language": "ja"}, {"quality_profile": "high"}, {"video_codec": "h264"},
-                        {"subtitle_mode": "soft"}, {"resolution": "720p"}):
+                        {"subtitle_mode": "soft"}, {"resolution": "720p"}, {"additional_languages": ["ja"]}):
             response = self.client.post("/api/uploads", json={**self.payload, **changes})
             self.assertEqual(response.status_code, 409)
         self.assertEqual(len(self.repo.list()), 1)
@@ -109,3 +109,17 @@ class UploadCreationTests(unittest.TestCase):
         self.assertEqual(self.repo.read(job_id).options.resolution, "720p")
         self.assertEqual(self.client.get(f"/api/jobs/{job_id}").json()["resolution"], "720p")
         self.assertEqual(self.client.post("/api/uploads", json={**self.payload, "resolution": "invalid"}).status_code, 422)
+
+    def test_additional_languages_persist_and_reject_duplicates_or_paths(self):
+        from video_service.models import JobOptions
+        self.assertEqual(JobOptions.from_dict({}).additional_languages, [])
+        payload = {**self.payload, "additional_languages": ["ja", "es"]}
+        first = self.client.post("/api/uploads", json=payload).json()
+        self.assertEqual(self.client.post("/api/uploads", json=payload).json()["job_id"], first["job_id"])
+        self.assertEqual(self.repo.read(first["job_id"]).options.additional_languages, ["ja", "es"])
+        self.assertEqual(self.client.get(f"/api/jobs/{first['job_id']}").json()["additional_languages"], ["ja", "es"])
+        for invalid in (["ko"], ["ja", "ja"], ["en-US", "en-us"], ["../en"], ["en.srt"],
+                        ["en", "ja", "es", "zh", "fr"], None, "ja"):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(self.client.post("/api/uploads", json={**self.payload,
+                    "additional_languages": invalid}).status_code, 422)

@@ -64,17 +64,17 @@ def output_dimensions(stream, resolution="original"):
     return result
 
 
-def validate_output(source, output, size, video_codec="hevc", subtitle_mode="burn", resolution="original"):
+def validate_output(source, output, size, video_codec="hevc", subtitle_mode="burn", resolution="original", subtitle_count=1):
     if video_codec not in {"hevc", "h264"}:
         raise ValueError("Unsupported video codec")
     if subtitle_mode not in {"burn", "soft"}:
         raise ValueError("Unsupported subtitle mode")
     subtitles = [s for s in output["streams"] if s["codec_type"] == "subtitle"]
     if subtitle_mode == "soft":
-        if len(subtitles) != 1 or subtitles[0].get("codec_name") != "mov_text":
-            raise ValueError("Output must contain one mov_text subtitle track")
-        if subtitles[0].get("disposition", {}).get("default") != 1:
-            raise ValueError("Subtitle track must be enabled by default")
+        if not 1 <= subtitle_count <= 5 or len(subtitles) != subtitle_count or any(s.get("codec_name") != "mov_text" for s in subtitles):
+            raise ValueError("Output subtitle track count or codec mismatch")
+        if any(s.get("disposition", {}).get("default") != int(index == 0) for index, s in enumerate(subtitles)):
+            raise ValueError("Only the primary subtitle track must be enabled by default")
     elif subtitles:
         raise ValueError("Burned output must not contain subtitle tracks")
     videos = [s for s in output["streams"] if s["codec_type"] == "video"]

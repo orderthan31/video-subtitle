@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
+import re
 from typing import Any
 
 
@@ -51,6 +52,17 @@ class QualityProfile(StrEnum):
     COMPACT = "compact"
 
 
+def validate_additional_languages(primary, languages):
+    if not isinstance(languages, list) or len(languages) > 4:
+        raise ValueError("At most four additional languages are supported")
+    for language in languages:
+        if not isinstance(language, str) or not re.fullmatch(r"[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", language):
+            raise ValueError("Invalid additional language")
+    normalized = [language.lower() for language in [primary, *languages]]
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("Translation languages must be unique")
+
+
 @dataclass(slots=True)
 class JobOptions:
     source_language: str = "auto"
@@ -59,8 +71,10 @@ class JobOptions:
     video_codec: str = "hevc"
     subtitle_mode: str = "burn"
     resolution: str = "original"
+    additional_languages: list[str] = field(default_factory=list)
 
     def __post_init__(self):
+        validate_additional_languages(self.target_language, self.additional_languages)
         if self.video_codec not in {"hevc", "h264"}:
             raise ValueError("Unsupported video codec")
         if self.subtitle_mode not in {"burn", "soft"}:
@@ -78,6 +92,7 @@ class JobOptions:
             video_codec=str(data.get("video_codec", "hevc")),
             subtitle_mode=str(data.get("subtitle_mode", "burn")),
             resolution=str(data.get("resolution", "original")),
+            additional_languages=data.get("additional_languages", []),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,6 +103,7 @@ class JobOptions:
             "video_codec": self.video_codec,
             "subtitle_mode": self.subtitle_mode,
             "resolution": self.resolution,
+            "additional_languages": list(self.additional_languages),
         }
 
 
