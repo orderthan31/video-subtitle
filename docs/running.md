@@ -32,6 +32,9 @@ GPU 사용이 불가능한 개발 환경에서는 `.env`에
 `ALLOW_SOFTWARE_ENCODER_FALLBACK=true`를 설정해 소프트웨어 HEVC 전환을 허용한다.
 시스템 드라이버를 자동으로 변경하지 않는다.
 
+여러 Worker를 띄울 때 `MAX_ENCODING_JOBS`는 모든 Worker에서 같은 값으로 설정한다.
+기본값 1은 인코더 검사와 실제 출력이 동시에 하나만 실행되게 한다. 슬롯을 기다리는 작업도 취소할 수 있다.
+
 ## Docker Compose
 
 현재 작업 환경에는 Docker가 없어 아래 구성은 파일 형식 검사만 완료했다.

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import time
 
-from video_service.locking import job_lock, JobBusyError
+from video_service.locking import job_lock, JobBusyError, encoding_slot
 from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.storage import remove_path_inside, write_json_atomic
@@ -64,7 +64,8 @@ class Worker:
             try:
                 work = repo.job_dir(job_id) / "work"
                 work.mkdir(exist_ok=True)
-                encoder = select_encoder(work, check)
+                with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
+                    encoder = select_encoder(work, check)
                 source = repo.source_path(record).resolve()
                 metadata = probe(source, work, check)
                 videos = [stream for stream in metadata["streams"] if stream["codec_type"] == "video"]
@@ -93,11 +94,13 @@ class Worker:
                 output.mkdir(exist_ok=True)
                 (output / "translated.srt").write_text(srt, encoding="utf-8")
                 (work / "translated.srt").write_text(srt, encoding="utf-8")
-                self.transition(job_id, JobStatus.ENCODING)
+                self.transition(job_id, JobStatus.ENCODING, message="인코딩 슬롯 대기 중")
                 target = (output / "final.mp4").resolve()
                 software = encoder == "libx265"
-                run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software),
-                    cwd=work, log_name="encode.log", check=check)
+                with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
+                    self.transition(job_id, JobStatus.ENCODING, message="영상 인코딩 중")
+                    run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software),
+                        cwd=work, log_name="encode.log", check=check)
                 self.transition(job_id, JobStatus.VALIDATING)
                 final = probe(target, work, check)
                 kinds = {s["codec_type"] for s in final["streams"]}
