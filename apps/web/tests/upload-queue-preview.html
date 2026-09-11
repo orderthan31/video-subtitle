@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Upload queue fixture</title></head>
+<body><nav><button id="select">Select test video</button><button id="release">Release upload</button><output id="stats"></output></nav><div id="root"></div>
+<script type="module">
+const jobs = new Map(); let number = 0, active = 0, peak = 0;
+const pending = [];
+const json = data => new Response(JSON.stringify(data), {headers:{'Content-Type':'application/json'}});
+const stats = () => { document.getElementById('stats').textContent = `Active: ${active}; peak: ${peak}; jobs: ${jobs.size}`; };
+document.getElementById('select').onclick = () => {
+  const transfer = new DataTransfer();
+  transfer.items.add(new File([new Uint8Array(1024)], `test-${++number}.mp4`, {type:'video/mp4'}));
+  const input = document.querySelector('input[type=file]'); input.files = transfer.files;
+  input.dispatchEvent(new Event('change', {bubbles:true}));
+};
+document.getElementById('release').onclick = () => pending.shift()?.();
+window.fetch = async (url, init={}) => {
+  const path = new URL(url, location.href).pathname;
+  if (path.endsWith('/auth/session')) return json({enabled:false,user:null});
+  if (path.endsWith('/jobs')) return json({jobs:[...jobs.values()]});
+  if (path.endsWith('/uploads')) {
+    const data = JSON.parse(init.body), id = data.request_id.replaceAll('-','');
+    if (!jobs.has(id)) jobs.set(id, {...data,job_id:id,original_filename:data.filename,expected_size:data.size,
+      uploaded_bytes:0,status:'UPLOADING',created_at:new Date().toISOString(),metadata:{}});
+    stats(); return json({job_id:id});
+  }
+  const id = path.split('/')[3], job = jobs.get(id);
+  if (!job) throw new Error(`Unexpected fixture request: ${path}`);
+  if (path.endsWith('/chunks')) {
+    active++; peak=Math.max(peak,active); stats();
+    await new Promise((resolve,reject) => {
+      const finish = () => {init.signal?.removeEventListener('abort',abort);resolve();};
+      const abort = () => {const index=pending.indexOf(finish);if(index>=0)pending.splice(index,1);reject(new DOMException('Aborted','AbortError'));};
+      pending.push(finish); init.signal?.addEventListener('abort',abort,{once:true});
+    }).finally(()=>{active--;stats();});
+    job.uploaded_bytes=job.expected_size; return json({uploaded_bytes:job.uploaded_bytes});
+  }
+  if (path.endsWith('/complete')) {job.status='READY';return json({});}
+  if (path.endsWith('/verify')) return new Response(null,{status:204});
+  if (path.endsWith('/cancel')) {job.status='CANCELLED';return json({});}
+  return json({...job,resumable:job.status==='UPLOADING'});
+};
+await import('../src/main.tsx');
+</script></body></html>
