@@ -71,7 +71,8 @@ function App() {
     } catch(e) {setError(e instanceof Error ? e.message : '요청에 실패했습니다.');}
     finally {setPending('');}
   }
-  const visible = jobs.filter(job => filter === 'all' || (filter === 'active' ? !terminal(job) : job.status === 'COMPLETED'));
+  const visible = jobs.filter(job => filter === 'all' || (filter === 'active' ? !terminal(job)
+    : filter === 'history' ? terminal(job) : job.status === 'COMPLETED'));
   return <>
     <header><a className="brand" href="/"><Captions size={27}/><span>영상 자막 작업실</span></a><span className={'connection '+(online?'online':'')}>{online?'서버 연결됨':'서버 연결 끊김'}</span></header>
     <main>
@@ -94,16 +95,18 @@ function App() {
         </div>
       </section>
       <section className="jobs" aria-label="작업 목록"><div className="section-title"><h2>작업 목록 <span>{jobs.length}</span></h2><button className="icon" title="목록 새로고침" onClick={()=>void refresh()}><RefreshCw size={18}/></button></div>
-        <div className="tabs" role="tablist" aria-label="작업 필터">{[['all','전체'],['active','진행 중'],['done','완료']].map(([value,label])=><button role="tab" aria-selected={filter===value} key={value} onClick={()=>setFilter(value)}>{label}</button>)}</div>
+        <div className="tabs" role="tablist" aria-label="작업 필터">{[['all','전체'],['active','진행 중'],['done','완료'],['history','작업 이력']].map(([value,label])=><button role="tab" aria-selected={filter===value} key={value} onClick={()=>setFilter(value)}>{label}</button>)}</div>
         {!visible.length ? <div className="empty"><FileVideo size={36}/><h3>{online?'아직 작업이 없습니다':'서버에 연결할 수 없습니다'}</h3></div> : <div className="job-list">{visible.map(job=><article key={job.job_id} className="job-row"><div className="video-icon">{job.status==='COMPLETED'?<Check/>:<FileVideo/>}</div><div className="job-description"><h3>{job.original_filename}</h3><p>{bytes(job.expected_size)} <span>·</span> {languageName(job.target_language)} <span>·</span> {new Date(job.created_at).toLocaleString('ko-KR')}</p>{job.error&&<p className="job-error">{job.error}</p>}{job.status==='UPLOADING'&&<progress aria-label={`${job.original_filename} 업로드 진행률`} max={job.expected_size} value={job.job_id===uploadId?Math.max(job.uploaded_bytes,progress):job.uploaded_bytes}/>}</div><span className={'status '+job.status.toLowerCase()}><Clock size={14}/>{job.metadata.cancel_requested&&!terminal(job)?'취소 중':labels[job.status]||job.status}</span><div className="actions">
-          {job.status==='COMPLETED'&&<><a className="download" href={`${base}/jobs/${job.job_id}/results/final.mp4`}><Download size={16}/>MP4</a><a className="download" href={`${base}/jobs/${job.job_id}/results/translated.srt`}><Download size={16}/>번역 SRT</a>{job.metadata.result_files?.includes('original.srt')&&<a className="download" href={`${base}/jobs/${job.job_id}/results/original.srt`}><Download size={16}/>원문 SRT</a>}</>}
-          {job.status==='COMPLETED'&&job.metadata.result_files?.includes('translated.smi')&&<a className="download" href={`${base}/jobs/${job.job_id}/results/translated.smi`}><Download size={16}/>SMI</a>}
+          {job.status==='COMPLETED'&&job.metadata.results_expired_at&&<span className="status" title={new Date(job.metadata.results_expired_at).toLocaleString('ko-KR')}>결과 만료</span>}
+          {job.metadata.upload_expired_at&&<span className="status">업로드 만료</span>}
+          {job.status==='COMPLETED'&&!job.metadata.results_expired_at&&<><a className="download" href={`${base}/jobs/${job.job_id}/results/final.mp4`}><Download size={16}/>MP4</a><a className="download" href={`${base}/jobs/${job.job_id}/results/translated.srt`}><Download size={16}/>번역 SRT</a>{job.metadata.result_files?.includes('original.srt')&&<a className="download" href={`${base}/jobs/${job.job_id}/results/original.srt`}><Download size={16}/>원문 SRT</a>}</>}
+          {job.status==='COMPLETED'&&!job.metadata.results_expired_at&&job.metadata.result_files?.includes('translated.smi')&&<a className="download" href={`${base}/jobs/${job.job_id}/results/translated.smi`}><Download size={16}/>SMI</a>}
           {job.status==='UPLOADING'&&<button className="icon" disabled={busy} title="업로드 재개" onClick={()=>{setResumeId(job.job_id);setUploadId(job.job_id);setFile(null);setProgress(job.uploaded_bytes);setSource(job.source_language);setTarget(job.target_language);setQuality(job.quality_profile);setCodec(job.video_codec||'hevc');setSubtitleMode(job.subtitle_mode||'burn');setResolution(job.resolution||'original');}}><Play size={18}/></button>}
           {terminal(job)?<button className="icon danger" title="작업 삭제" disabled={pending===job.job_id} onClick={()=>setConfirm(job)}><Trash2 size={18}/></button>:<button className="icon danger" title="작업 취소" disabled={busy||pending===job.job_id||!!job.metadata.cancel_requested} onClick={()=>void action(job,'cancel')}><X size={18}/></button>}
         </div><StageProgress job={job}/></article>)}</div>}
       </section>
     </main>
-    {confirm&&<div className="overlay"><div role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog"><h2 id="delete-title">작업을 삭제할까요?</h2><p>{confirm.original_filename}</p><p>영상과 자막 파일이 함께 삭제됩니다.</p><div><button autoFocus onClick={()=>setConfirm(null)}>돌아가기</button><button className="destructive" disabled={!!pending} onClick={()=>void action(confirm,'delete')}>삭제</button></div></div></div>}
+    {confirm&&<div className="overlay"><div role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog"><h2 id="delete-title">작업을 삭제할까요?</h2><p>{confirm.original_filename}</p><p>작업 기록과 남아 있는 영상·자막 파일이 함께 삭제됩니다.</p><div><button autoFocus onClick={()=>setConfirm(null)}>돌아가기</button><button className="destructive" disabled={!!pending} onClick={()=>void action(confirm,'delete')}>삭제</button></div></div></div>}
   </>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

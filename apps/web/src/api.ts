@@ -6,7 +6,8 @@ export type Job = {
   target_language: string; quality_profile: string; created_at: string; completed_at: string | null;
   source_language: string; video_codec?: string; subtitle_mode?: string; resolution?: string;
   error: string | null; status_message?: string | null;
-  metadata: {cancel_requested?: boolean; duration?: number; stage_progress?: number | null; result_files?: string[]};
+  metadata: {cancel_requested?: boolean; duration?: number; stage_progress?: number | null; result_files?: string[];
+    results_expired_at?: string; upload_expired_at?: string};
 };
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }

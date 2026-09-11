@@ -20,6 +20,8 @@ class ResultResponse(FileResponse):
             record = self.repository.read(self.job_id)
             if record.status != JobStatus.COMPLETED:
                 raise HTTPException(status_code=409, detail="아직 완료되지 않은 Job입니다.")
+            if record.metadata.get("results_expired_at"):
+                raise HTTPException(status_code=410, detail="결과 파일의 보관 기간이 만료되었습니다.")
             if not self.path.is_file():
                 raise HTTPException(status_code=404, detail="결과 파일을 찾을 수 없습니다.")
             # Do not hand off a path whose deferred transfer could outlive the lease.

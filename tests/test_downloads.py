@@ -47,7 +47,8 @@ class DownloadTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.output.exists())
         with patch.dict("os.environ", {"RESULT_TTL_HOURS": "0"}):
             self.worker.collect()
-        self.assertFalse(self.repo.job_dir(self.job).exists())
+        self.assertFalse(self.output.exists())
+        self.assertTrue(self.repo.read(self.job).metadata["results_expired_at"])
 
     def test_abandoned_lease_is_reclaimed(self):
         directory = self.root / ".locks"

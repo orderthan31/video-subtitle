@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import logging
+import math
 import os
 from pathlib import Path
 import time
@@ -184,6 +185,12 @@ class Worker:
     def collect(self):
         if self.stop.is_set():
             return
+        result_ttl = float(os.getenv("RESULT_TTL_HOURS", "24")) * 3600
+        history_ttl = float(os.getenv("HISTORY_TTL_DAYS", "90")) * 86400
+        upload_ttl = float(os.getenv("UPLOAD_TTL_HOURS", "6")) * 3600
+        if any(not math.isfinite(value) or value < 0 for value in (result_ttl, history_ttl, upload_ttl)):
+            raise ValueError("Retention periods must be finite and nonnegative")
+        history_ttl = max(history_ttl, result_ttl)
         collect_orphans(self.repository, grace_seconds=float(os.getenv("ORPHAN_GRACE_HOURS", "2")) * 3600)
         now = datetime.now(timezone.utc)
         for record in self.repository.list():
@@ -194,15 +201,27 @@ class Worker:
                     record = self.repository.read(record.job_id)
                     age = (now - datetime.fromisoformat(record.completed_at or record.updated_at)).total_seconds()
                     if record.status in TERMINAL_STATUSES:
-                        self.cleanup(record.job_id, keep_output=record.status == JobStatus.COMPLETED)
+                        if age > history_ttl:
+                            self.repository.delete_job_dir(record.job_id)
+                            continue
+                        expired = record.status == JobStatus.COMPLETED and (
+                            age > result_ttl or bool(record.metadata.get("results_expired_at")))
+                        self.cleanup(record.job_id, keep_output=record.status == JobStatus.COMPLETED and not expired)
+                        changed = False
                         if record.metadata.get("cleanup_pending"):
                             record.metadata.update(cleanup_pending=False, cleanup_error=None)
+                            changed = True
+                        if expired and not record.metadata.get("results_expired_at"):
+                            record.metadata["results_expired_at"] = now.isoformat()
+                            changed = True
+                        if changed:
                             self.repository.save(record)
-                        if age > float(os.getenv("RESULT_TTL_HOURS", "24")) * 3600:
-                            self.repository.delete_job_dir(record.job_id)
                     elif record.status == JobStatus.UPLOADING:
-                        if age > float(os.getenv("UPLOAD_TTL_HOURS", "6")) * 3600:
-                            self.repository.delete_job_dir(record.job_id)
+                        if age > upload_ttl:
+                            self.cleanup(record.job_id)
+                            self.repository.update_status(record.job_id, JobStatus.CANCELLED,
+                                message="업로드 보관 기간이 만료되었습니다.",
+                                metadata={"upload_expired_at": now.isoformat()})
                     elif record.status != JobStatus.QUEUED:
                         self.cleanup(record.job_id)
                         self.repository.update_status(record.job_id, JobStatus.FAILED, error="Worker interrupted; upload again")

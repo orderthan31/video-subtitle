@@ -56,11 +56,10 @@ API는 장시간 미디어 처리나 외부 AI 호출을 직접 실행하지 않
 - Heartbeat와 stale job 복구
 - Storage quota enforcement 강화
 - GC scheduler
-- 인증, 작업 이력, 운영 모니터링
+- 인증, 운영 모니터링 (작업 이력 스냅샷은 결과 TTL과 분리해 구현)
 
 ## 보수적 필터링 정책
 
 Audio 단계에서는 명백한 긴 무음과 확실한 비발화 구간만 제거한다. 호흡음/기합/추임새 제거는 STT 후 transcript filter를 함께 사용한다.
 
 실제 대사 삭제는 가장 큰 품질 리스크이므로, 애매한 Segment는 유지하는 것이 기본이다.
-
