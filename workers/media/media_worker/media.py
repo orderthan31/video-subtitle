@@ -105,16 +105,28 @@ def preprocess_audio(source, work, check=lambda: None):
     return output, spans
 
 
-def encoding_args(source, destination, video_stream, quality="balanced", software=False, video_codec="hevc"):
+def encoding_args(source, destination, video_stream, quality="balanced", software=False, video_codec="hevc",
+                  subtitle_mode="burn", target_language="ko"):
     if video_codec not in {"hevc", "h264"}:
         raise ValueError("Unsupported video codec")
+    if subtitle_mode not in {"burn", "soft"}:
+        raise ValueError("Unsupported subtitle mode")
     fps = float(Fraction(video_stream.get("avg_frame_rate", "0/1")))
     if not math.isfinite(fps) or fps <= 0:
         raise ValueError("Invalid frame rate")
     cq = {"balanced": 24, "high": 20, "compact": 29}[quality]
-    args = [executable("ffmpeg"), "-nostdin", "-y", "-i", source, "-map", "0:v:0", "-map", "0:a:0",
-        "-vf", "subtitles=translated.srt", "-c:v",
-        ("libx265" if video_codec == "hevc" else "libx264") if software else f"{video_codec}_nvenc"]
+    args = [executable("ffmpeg"), "-nostdin", "-y", "-i", source]
+    if subtitle_mode == "soft":
+        args += ["-i", "translated.srt"]
+    args += ["-map", "0:v:0", "-map", "0:a:0"]
+    if subtitle_mode == "soft":
+        language = {"ko": "kor", "en": "eng", "ja": "jpn", "zh": "zho", "es": "spa"}.get(
+            target_language.split("-")[0], "und")
+        args += ["-map", "1:s:0", "-c:s", "mov_text", "-disposition:s:0", "default",
+            "-metadata:s:s:0", f"language={language}", "-metadata:s:s:0", f"handler_name={target_language}"]
+    else:
+        args += ["-vf", "subtitles=translated.srt"]
+    args += ["-c:v", ("libx265" if video_codec == "hevc" else "libx264") if software else f"{video_codec}_nvenc"]
     args += ["-preset", "medium", "-crf", str(cq)] if software else ["-preset", "p5", "-rc", "vbr", "-cq", str(cq), "-b:v", "0"]
     return args + ["-g", str(max(1, round(fps * 2))), "-tag:v", "hvc1" if video_codec == "hevc" else "avc1", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",

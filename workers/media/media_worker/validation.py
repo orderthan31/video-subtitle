@@ -45,9 +45,19 @@ def display_dimensions(stream):
     return None
 
 
-def validate_output(source, output, size, video_codec="hevc"):
+def validate_output(source, output, size, video_codec="hevc", subtitle_mode="burn"):
     if video_codec not in {"hevc", "h264"}:
         raise ValueError("Unsupported video codec")
+    if subtitle_mode not in {"burn", "soft"}:
+        raise ValueError("Unsupported subtitle mode")
+    subtitles = [s for s in output["streams"] if s["codec_type"] == "subtitle"]
+    if subtitle_mode == "soft":
+        if len(subtitles) != 1 or subtitles[0].get("codec_name") != "mov_text":
+            raise ValueError("Output must contain one mov_text subtitle track")
+        if subtitles[0].get("disposition", {}).get("default") != 1:
+            raise ValueError("Subtitle track must be enabled by default")
+    elif subtitles:
+        raise ValueError("Burned output must not contain subtitle tracks")
     videos = [s for s in output["streams"] if s["codec_type"] == "video"]
     audios = [s for s in output["streams"] if s["codec_type"] == "audio"]
     if size <= 0 or len(videos) != 1 or len(audios) != 1:

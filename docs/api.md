@@ -21,9 +21,13 @@ Content-Type: application/json
   "size": 1073741824,
   "source_language": "auto",
   "target_language": "ko",
-  "quality_profile": "balanced"
+  "quality_profile": "balanced",
+  "video_codec": "hevc",
+  "subtitle_mode": "burn"
 }
 ```
+
+`subtitle_mode`는 `burn`(기본 번인) 또는 `soft`(MP4 내장 자막 트랙)다. 기존 작업은 `burn`으로 해석한다. 작업 조회에도 반환하며, 같은 `request_id`에 다른 모드를 보내면 409다. 두 모드 모두 별도 SRT/SMI 결과를 제공한다.
 
 응답:
 

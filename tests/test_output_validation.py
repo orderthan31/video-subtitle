@@ -21,6 +21,37 @@ class OutputValidationTests(unittest.TestCase):
     def test_expected_output_passes(self):
         validate_output(self.source, self.output, 100)
 
+    def test_soft_output_requires_single_default_mov_text_track(self):
+        with self.assertRaises(ValueError):
+            validate_output(self.source, self.output, 100, subtitle_mode="soft")
+        subtitle = {"codec_type": "subtitle", "codec_name": "mov_text", "disposition": {"default": 1}}
+        self.output["streams"].append(subtitle)
+        validate_output(self.source, self.output, 100, subtitle_mode="soft")
+        with self.assertRaises(ValueError):
+            validate_output(self.source, self.output, 100)
+        for change in ({"codec_name": "ass"}, {"disposition": {"default": 0}}):
+            output = deepcopy(self.output)
+            output["streams"][-1].update(change)
+            with self.assertRaises(ValueError):
+                validate_output(self.source, output, 100, subtitle_mode="soft")
+        self.output["streams"].append(subtitle)
+        with self.assertRaises(ValueError):
+            validate_output(self.source, self.output, 100, subtitle_mode="soft")
+
+    def test_soft_encoding_maps_only_translated_subtitles_without_burning(self):
+        from media_worker.media import encoding_args
+        for codec in ("hevc", "h264"):
+            args = encoding_args("source.mp4", "final.mp4", {"avg_frame_rate": "30/1"},
+                video_codec=codec, subtitle_mode="soft", target_language="ko")
+            self.assertNotIn("-vf", args)
+            self.assertEqual(args.count("-i"), 2)
+            self.assertIn("1:s:0", args)
+            self.assertEqual(args[args.index("-c:s") + 1], "mov_text")
+            self.assertIn("language=kor", args)
+            self.assertNotIn("-shortest", args)
+        with self.assertRaises(ValueError):
+            encoding_args("source", "output", {"avg_frame_rate": "30/1"}, subtitle_mode="unknown")
+
     def test_requested_h264_requires_h264_and_avc1(self):
         self.output["streams"][0].update(codec_name="h264", codec_tag_string="avc1")
         validate_output(self.source, self.output, 100, "h264")

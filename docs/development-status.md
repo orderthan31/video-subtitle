@@ -4,6 +4,8 @@
 
 ## 구현 및 검증
 
+- 소프트 자막 구현: `subtitle_mode=burn|soft`를 API·영속화·생성 멱등성·웹 선택/재개에 연결했다. 기본 번인은 유지하며 soft는 번인 필터 없이 단일 기본 `mov_text` 트랙을 MP4에 넣는다. Worker는 모드별 트랙 수/코덱/default disposition을 검사한다. Python 119개·웹 4개 테스트와 빌드 통과. 실제 Gemini→HEVC NVENC 작업 `643dba162ac047e6b9eca1bae19f48c7` 완료. HEVC/H.264 각각 GPU·소프트웨어 전체 디코딩, 내장 자막 SRT 재추출 텍스트/시간 일치 확인. 재현 절차와 호환성 제한은 [소프트 자막 검증](soft-subtitle-verification.md)에 기록했다.
+
 - H.264 후속 기능 구현: `video_codec=hevc|h264` 작업 옵션을 API·영속화·생성 재시도 충돌 검사·웹 선택/재개에 연결했다. 기존 레코드는 HEVC로 해석한다. H.264는 `h264_nvenc`/`libx264`, `avc1` 태그를 사용하고 코덱별 결과 검증을 수행한다. 116개 테스트·웹 빌드 통과. 실제 Gemini→H.264 NVENC 작업 `05be90f1185b43748b1a6ce48466e2de` 완료 및 소프트웨어 회전 영상 검증 성공(`data/output-validation/ec19cad18c624e4aa202311e025ed14c/report.json`). 데스크톱 코덱 선택 확인. 모바일 재생·코덱별 장시간 품질 비교는 남아 있다.
 
 - 번역 SMI 후속 기능 구현: 번역 SRT와 동일한 cue에서 밀리초 시작/종료·줄바꿈·HTML 이스케이프를 적용한 UTF-8 SAMI를 생성한다. FFmpeg가 자막 종료를 인식하도록 `&nbsp;` clear marker를 사용한다. `translated.smi` API·웹 링크 연결 및 총 111개 테스트/웹 빌드 통과. `scripts/smoke-sami.py` 독립 FFmpeg 재변환에서 표시 텍스트·시간 일치 확인(보고서 `data/sami-validation/6681dfb52f094ffaab522f14bec9f69c/report.json`). 실제 Gemini·NVENC 작업 `8296144273b8484e877ad16329f55d3d` 완료 후 SMI HTTP 200 및 데스크톱 링크 확인. 레거시/모바일 플레이어별 호환성은 미검증.
@@ -82,7 +84,7 @@
 - 용량 검사 사이 출력 증가 제한과 실제 대용량 저장소 부하 검증. 긴 저비트레이트 영상의 PCM 전개 용량 예약은 구현·회귀 검증했다.
 - Docker가 있는 환경에서 이미지 빌드·Compose 기동·볼륨 권한·GPU 실행 검증.
 - 30~60분/1~5GB 영상 E2E, 모바일 재생/Seek, 자막 싱크와 정리 검증.
-- 미구현 후속 범위: 소프트 자막, 해상도 선택, 다중 번역 언어, 자막 편집, 필터 강도, 작업 이력, 인증. H.264·원문 SRT·번역 SMI는 구현했으며 모바일 저장 및 플레이어별 호환성 검증은 남아 있다.
+- 미구현 후속 범위: 해상도 선택, 다중 번역 언어, 자막 편집, 필터 강도, 작업 이력, 인증. 소프트 자막·H.264·원문 SRT·번역 SMI는 구현했으며 모바일 저장 및 플레이어별 호환성 검증은 남아 있다.
 
 ## 참고한 공식 문서
 

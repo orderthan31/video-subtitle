@@ -15,6 +15,7 @@ class UploadCreateRequest(BaseModel):
     target_language: str = Field(default="ko", pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
     quality_profile: QualityProfile = QualityProfile.BALANCED
     video_codec: Literal["hevc", "h264"] = "hevc"
+    subtitle_mode: Literal["burn", "soft"] = "burn"
 
 
 class UploadCreateResponse(BaseModel):
@@ -55,6 +56,7 @@ class JobResponse(BaseModel):
     target_language: str
     quality_profile: str
     video_codec: str
+    subtitle_mode: str
     status_message: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -78,6 +80,7 @@ def job_to_response(record: JobRecord) -> JobResponse:
         target_language=record.options.target_language,
         quality_profile=record.options.quality_profile.value,
         video_codec=record.options.video_codec,
+        subtitle_mode=record.options.subtitle_mode,
         status_message=record.status_message,
         error=record.error,
         metadata=record.metadata,

@@ -147,12 +147,13 @@ class Worker:
                     self.transition(job_id, JobStatus.ENCODING, message="영상 인코딩 중")
                     progress_path = work / "encode-progress.txt"
                     progress_duration = metadata["duration"]
-                    run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software, record.options.video_codec),
+                    run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software,
+                        record.options.video_codec, record.options.subtitle_mode, record.options.target_language),
                         cwd=work, log_name="encode.log", check=check)
                     progress_path = None
                 self.transition(job_id, JobStatus.VALIDATING)
                 final = probe(target, work, check)
-                validate_output(metadata, final, target.stat().st_size, record.options.video_codec)
+                validate_output(metadata, final, target.stat().st_size, record.options.video_codec, record.options.subtitle_mode)
                 validate_decodable(target, work, check)
                 self.transition(job_id, JobStatus.CLEANING)
                 size = target.stat().st_size
