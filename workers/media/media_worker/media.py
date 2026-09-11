@@ -125,7 +125,7 @@ def select_encoder(work, check=lambda: None):
     if requested != "hevc_nvenc":
         raise ValueError("Unsupported VIDEO_ENCODER")
     try:
-        run_process([executable("ffmpeg"), "-nostdin", "-f", "lavfi", "-i", "color=size=128x128:rate=1",
+        run_process([executable("ffmpeg"), "-nostdin", "-f", "lavfi", "-i", "color=size=640x360:rate=30",
             "-frames:v", "1", "-c:v", "hevc_nvenc", "-f", "null", "-"],
             cwd=work, log_name="encoder-check.log", check=check, timeout=30)
         return "hevc_nvenc"

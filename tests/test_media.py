@@ -56,6 +56,14 @@ class MediaTests(unittest.TestCase):
         with patch.dict("os.environ", {"VIDEO_ENCODER": "hevc_nvenc", "ALLOW_SOFTWARE_ENCODER_FALLBACK": "true"}), patch("media_worker.media.run_process", side_effect=RuntimeError("driver")):
             self.assertEqual(select_encoder(self.work), "libx265")
 
+    def test_encoder_preflight_uses_supported_frame_size(self):
+        with patch.dict("os.environ", {"VIDEO_ENCODER": "hevc_nvenc"}), \
+                patch("media_worker.media.run_process") as run:
+            self.assertEqual(select_encoder(self.work), "hevc_nvenc")
+        args = run.call_args.args[0]
+        self.assertEqual(args[args.index("-i") + 1], "color=size=640x360:rate=30")
+        self.assertIn("hevc_nvenc", args)
+
     def test_process_cancel_terminates_child(self):
         def cancel():
             raise Cancelled()
