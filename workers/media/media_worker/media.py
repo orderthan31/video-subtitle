@@ -91,14 +91,20 @@ def copy_audio_intervals(source, destination, intervals, check=lambda: None):
     return build_timeline_from_kept_intervals(actual)
 
 
-def preprocess_audio(source, work, check=lambda: None):
+def preprocess_audio(source, work, check=lambda: None, audio_filter="conservative"):
+    if audio_filter not in {"off", "conservative", "strong"}:
+        raise ValueError("Unsupported audio filter")
     with wave.open(str(source), "rb") as audio:
         duration = audio.getnframes() / audio.getframerate()
-    log = run_process([executable("ffmpeg"), "-nostdin", "-i", source,
-        "-af", "silencedetect=noise=-45dB:d=10", "-f", "null", "-"],
-        cwd=work, log_name="silence.log", check=check)
-    with log.open(encoding="utf-8", errors="replace") as lines:
-        intervals = kept_intervals(lines, duration)
+    if audio_filter == "off":
+        intervals = [(0, duration)]
+    else:
+        minimum = 5 if audio_filter == "strong" else 10
+        log = run_process([executable("ffmpeg"), "-nostdin", "-i", source,
+            "-af", f"silencedetect=noise=-45dB:d={minimum}", "-f", "null", "-"],
+            cwd=work, log_name="silence.log", check=check)
+        with log.open(encoding="utf-8", errors="replace") as lines:
+            intervals = kept_intervals(lines, duration, minimum=minimum)
     output = work / "processed-audio.wav"
     spans = copy_audio_intervals(source, output, intervals, check)
     write_json_atomic(work / "timeline-map.json", [span.to_dict() for span in spans])

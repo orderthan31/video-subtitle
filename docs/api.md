@@ -25,7 +25,8 @@ Content-Type: application/json
   "video_codec": "hevc",
   "subtitle_mode": "burn",
   "resolution": "original",
-  "additional_languages": ["ja", "es"]
+  "additional_languages": ["ja", "es"],
+  "audio_filter": "conservative"
 }
 ```
 
@@ -34,6 +35,8 @@ Content-Type: application/json
 `resolution`은 `original`(기본), `1080p`, `720p`다. 가로 영상은 각각 최대 1920×1080/1280×720, 세로 영상은 반대 크기로 축소하며 작은 영상은 확대하지 않는다. 화면 비율을 유지하고 yuv420p에 맞춰 짝수 픽셀로 출력한다. 같은 `request_id`에서 해상도 변경은 409다. 작업 조회·업로드 재개에 저장된 값을 사용한다.
 
 `additional_languages`는 기본값 `[]`, 최대 4개 언어 코드 배열이다. 기본 `target_language`를 포함한 언어의 중복(대소문자 무시), 잘못된 코드/경로, 개수 초과는 422다. 배열 순서는 소프트 자막 트랙 순서이며 같은 `request_id`로 순서나 언어를 바꾸면 409다. 조회 응답에도 배열을 반환한다.
+
+`audio_filter`는 `off`, `conservative`(기본), `strong`이다. off는 PCM 시간축을 그대로 유지하고 빈 전사만 제외한다. 나머지는 -45dB 무음을 각각 10초/5초 이상에서 제거하며 경계에 0.2초를 남긴다. 명시적 독립 비언어 태그도 정리하되 일반 단어/감탄사는 삭제하지 않는다. 선택값은 작업 조회·재개에 유지하며 같은 생성 식별자에서 변경하면 409다. 호흡/기합의 오디오 의미 판별 모델은 아직 포함하지 않는다.
 
 기본 언어 결과는 `translated.srt`/`translated.smi`를 유지하고, 추가 언어는 `translated.{language}.srt`/`translated.{language}.smi`로 제공한다. 다운로드는 완료된 작업의 `metadata.result_files`에 선언된 추가 파일만 허용한다. 번인은 기본 언어만 영상에 표시하며, soft는 선택된 모든 언어를 별도 MP4 트랙에 포함하고 첫 트랙만 default로 지정한다. 모든 언어의 번역/자막 생성이 성공해야 완료하며 일부 언어 실패 시 작업 전체가 실패한다. 공통 전사는 한 번만 실행한다.
 

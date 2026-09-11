@@ -116,12 +116,12 @@ class Worker:
                 self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
                 audio = extract_audio(source, work, check)
                 self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)
-                audio, spans = preprocess_audio(audio, work, check)
+                audio, spans = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter)
                 self.transition(job_id, JobStatus.TRANSCRIBING)
                 segments = self.provider.transcribe(audio, record.options.source_language, check, spans=spans)
                 segments = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in segments]
                 self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
-                segments = filter_transcript_segments(segments)
+                segments = filter_transcript_segments(segments, record.options.audio_filter)
                 write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
                 self.transition(job_id, JobStatus.TRANSLATING)
                 languages = [record.options.target_language, *record.options.additional_languages]

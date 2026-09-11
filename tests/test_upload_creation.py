@@ -45,7 +45,8 @@ class UploadCreationTests(unittest.TestCase):
         first = self.client.post("/api/uploads", json=self.payload).json()
         for changes in ({"filename": "other.mp4"}, {"size": 7}, {"source_language": "en"},
                         {"target_language": "ja"}, {"quality_profile": "high"}, {"video_codec": "h264"},
-                        {"subtitle_mode": "soft"}, {"resolution": "720p"}, {"additional_languages": ["ja"]}):
+                        {"subtitle_mode": "soft"}, {"resolution": "720p"}, {"additional_languages": ["ja"]},
+                        {"audio_filter": "off"}):
             response = self.client.post("/api/uploads", json={**self.payload, **changes})
             self.assertEqual(response.status_code, 409)
         self.assertEqual(len(self.repo.list()), 1)
@@ -123,3 +124,15 @@ class UploadCreationTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 self.assertEqual(self.client.post("/api/uploads", json={**self.payload,
                     "additional_languages": invalid}).status_code, 422)
+
+    def test_audio_filter_validated_persisted_and_returned(self):
+        from video_service.models import JobOptions
+        self.assertEqual(JobOptions.from_dict({}).audio_filter, "conservative")
+        with self.assertRaises(ValueError):
+            JobOptions.from_dict({"audio_filter": "invalid"})
+        response = self.client.post("/api/uploads", json={**self.payload, "audio_filter": "strong"})
+        self.assertEqual(response.status_code, 201)
+        job_id = response.json()["job_id"]
+        self.assertEqual(self.repo.read(job_id).options.audio_filter, "strong")
+        self.assertEqual(self.client.get(f"/api/jobs/{job_id}").json()["audio_filter"], "strong")
+        self.assertEqual(self.client.post("/api/uploads", json={**self.payload, "audio_filter": "invalid"}).status_code, 422)

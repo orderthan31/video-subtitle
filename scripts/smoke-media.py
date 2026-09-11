@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--resolution", choices=["original", "1080p", "720p"], default="original")
     parser.add_argument("--frame-size", choices=["640x360", "1920x1080", "2560x1440"], default="640x360")
     parser.add_argument("--additional-language", action="append", default=[])
+    parser.add_argument("--audio-filter", choices=["off", "conservative", "strong"], default="conservative")
     args = parser.parse_args()
     if not args.run_live:
         parser.error("--run-live is required; this test calls Gemini")
@@ -40,7 +41,7 @@ def main():
     record = repo.create_job(original_filename="test.mp4", expected_size=source.stat().st_size,
         source_language="en", target_language="ko", quality_profile=QualityProfile.BALANCED,
         video_codec=args.video_codec, subtitle_mode=args.subtitle_mode, resolution=args.resolution,
-        additional_languages=args.additional_language)
+        additional_languages=args.additional_language, audio_filter=args.audio_filter)
     shutil.copyfile(source, repo.source_path(record))
     repo.update_upload_progress(record.job_id, record.expected_size)
     repo.update_status(record.job_id, JobStatus.QUEUED)

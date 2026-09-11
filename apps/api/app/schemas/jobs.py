@@ -18,6 +18,7 @@ class UploadCreateRequest(BaseModel):
     subtitle_mode: Literal["burn", "soft"] = "burn"
     resolution: Literal["original", "1080p", "720p"] = "original"
     additional_languages: list[str] = Field(default_factory=list, max_length=4)
+    audio_filter: Literal["off", "conservative", "strong"] = "conservative"
 
     @model_validator(mode="after")
     def validate_languages(self):
@@ -66,6 +67,7 @@ class JobResponse(BaseModel):
     subtitle_mode: str
     resolution: str
     additional_languages: list[str]
+    audio_filter: str
     status_message: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -92,6 +94,7 @@ def job_to_response(record: JobRecord) -> JobResponse:
         subtitle_mode=record.options.subtitle_mode,
         resolution=record.options.resolution,
         additional_languages=record.options.additional_languages,
+        audio_filter=record.options.audio_filter,
         status_message=record.status_message,
         error=record.error,
         metadata=record.metadata,

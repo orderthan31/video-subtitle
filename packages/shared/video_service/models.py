@@ -72,9 +72,12 @@ class JobOptions:
     subtitle_mode: str = "burn"
     resolution: str = "original"
     additional_languages: list[str] = field(default_factory=list)
+    audio_filter: str = "conservative"
 
     def __post_init__(self):
         validate_additional_languages(self.target_language, self.additional_languages)
+        if self.audio_filter not in {"off", "conservative", "strong"}:
+            raise ValueError("Unsupported audio filter")
         if self.video_codec not in {"hevc", "h264"}:
             raise ValueError("Unsupported video codec")
         if self.subtitle_mode not in {"burn", "soft"}:
@@ -93,6 +96,7 @@ class JobOptions:
             subtitle_mode=str(data.get("subtitle_mode", "burn")),
             resolution=str(data.get("resolution", "original")),
             additional_languages=data.get("additional_languages", []),
+            audio_filter=str(data.get("audio_filter", "conservative")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,6 +108,7 @@ class JobOptions:
             "subtitle_mode": self.subtitle_mode,
             "resolution": self.resolution,
             "additional_languages": list(self.additional_languages),
+            "audio_filter": self.audio_filter,
         }
 
 
