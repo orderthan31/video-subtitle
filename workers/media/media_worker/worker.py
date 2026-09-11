@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import time
 
-from video_service.locking import job_lock, JobBusyError, encoding_slot
+from video_service.locking import job_lock, JobBusyError, encoding_slot, wait_for_job_lock
 from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.storage import remove_path_inside, write_json_atomic
@@ -26,17 +26,24 @@ class Worker:
         self.provider = provider
 
     def transition(self, job_id, status, **kwargs):
-        with job_lock(self.repository, job_id):
+        def check_cancel():
             record = self.repository.read(job_id)
             if record.metadata.get("cancel_requested") or record.status == JobStatus.CANCELLED:
                 raise Cancelled()
+        with wait_for_job_lock(self.repository, job_id, check=check_cancel):
             metadata = {"stage_progress": None, **kwargs.pop("metadata", {})}
             return self.repository.update_status(job_id, status, metadata=metadata, **kwargs)
 
     def cleanup(self, job_id, keep_output=False):
         root = self.repository.storage_root
+        errors = []
         for name in (["input", "work"] if keep_output else ["input", "work", "output"]):
-            remove_path_inside(root, self.repository.job_dir(job_id) / name)
+            try:
+                remove_path_inside(root, self.repository.job_dir(job_id) / name)
+            except OSError as exc:
+                errors.append(f"{name}: {exc}")
+        if errors:
+            raise OSError("; ".join(errors))
 
     def process(self, job_id):
         repo = self.repository
@@ -134,12 +141,18 @@ class Worker:
                 self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size, "duration": final["duration"], "encoder": encoder})
             except (Exception, KeyboardInterrupt) as exc:
                 cancelled = isinstance(exc, (Cancelled, KeyboardInterrupt))
-                self.cleanup(job_id)
-                with job_lock(repo, job_id):
+                cleanup_error = None
+                try:
+                    self.cleanup(job_id)
+                except OSError as cleanup_exc:
+                    cleanup_error = str(cleanup_exc)
+                    logging.warning("Media cleanup deferred for job %s: %s", job_id, cleanup_error)
+                with wait_for_job_lock(repo, job_id):
                     current = repo.read(job_id)
                     cancelled = cancelled or current.metadata.get("cancel_requested", False)
                     repo.update_status(job_id, JobStatus.CANCELLED if cancelled else JobStatus.FAILED,
-                        error=None if cancelled else str(exc))
+                        error=None if cancelled else str(exc), metadata={"stage_progress": None,
+                            "cleanup_pending": cleanup_error is not None, "cleanup_error": cleanup_error})
                 if isinstance(exc, KeyboardInterrupt):
                     raise
 
@@ -153,6 +166,9 @@ class Worker:
                     age = (now - datetime.fromisoformat(record.completed_at or record.updated_at)).total_seconds()
                     if record.status in TERMINAL_STATUSES:
                         self.cleanup(record.job_id, keep_output=record.status == JobStatus.COMPLETED)
+                        if record.metadata.get("cleanup_pending"):
+                            record.metadata.update(cleanup_pending=False, cleanup_error=None)
+                            self.repository.save(record)
                         if age > float(os.getenv("RESULT_TTL_HOURS", "24")) * 3600:
                             self.repository.delete_job_dir(record.job_id)
                     elif record.status == JobStatus.UPLOADING:
@@ -163,6 +179,8 @@ class Worker:
                         self.repository.update_status(record.job_id, JobStatus.FAILED, error="Worker interrupted; upload again")
             except (JobBusyError, JobNotFoundError):
                 continue
+            except OSError:
+                logging.exception("Collection deferred for job %s", record.job_id)
 
     def tick(self):
         self.collect()

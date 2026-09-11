@@ -2,10 +2,32 @@
 from contextlib import contextmanager, ExitStack
 import os
 import time
+import math
 
 
 class JobBusyError(Exception):
     pass
+
+
+@contextmanager
+def wait_for_job_lock(repository, job_id, *, timeout=30, check=lambda: None):
+    """Wait for a state lock without retrying errors raised by its protected body."""
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("Lock timeout must be positive and finite")
+    deadline = time.monotonic() + timeout
+    with ExitStack() as stack:
+        while True:
+            check()
+            try:
+                stack.enter_context(job_lock(repository, job_id))
+                break
+            except JobBusyError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Timed out waiting for job state lock") from None
+                time.sleep(min(0.05, remaining))
+        check()
+        yield
 
 
 @contextmanager

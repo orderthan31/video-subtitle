@@ -1,4 +1,7 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from time import sleep
 import shutil
 import sys
 import unittest
@@ -8,6 +11,8 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.worker import Worker
+from media_worker.process import Cancelled
+from video_service.storage import remove_path_inside
 from video_service.locking import job_lock
 from video_service.models import JobStatus, QualityProfile
 from video_service.repository import FilesystemJobRepository
@@ -68,6 +73,64 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.repo.save(record)
         self.worker.collect()
         self.assertFalse(self.repo.job_dir(self.job).exists())
+
+    def test_cleanup_failure_preserves_original_error_and_gc_retries(self):
+        self.repo.update_status(self.job, JobStatus.QUEUED)
+        def fail_input(root, path):
+            if path.name == "input":
+                raise PermissionError("file in use")
+            remove_path_inside(root, path)
+        with patch("media_worker.worker.select_encoder", side_effect=RuntimeError("encoder failed")), \
+                patch("media_worker.worker.remove_path_inside", side_effect=fail_input), \
+                self.assertLogs(level="WARNING"):
+            self.worker.process(self.job)
+        record = self.repo.read(self.job)
+        self.assertEqual(record.status, JobStatus.FAILED)
+        self.assertEqual(record.error, "encoder failed")
+        self.assertTrue(record.metadata["cleanup_pending"])
+        self.assertIn("input", record.metadata["cleanup_error"])
+        self.assertTrue(self.repo.source_path(record).exists())
+        self.assertFalse((self.repo.job_dir(self.job) / "work").exists())
+        self.assertFalse((self.repo.job_dir(self.job) / "output").exists())
+        self.worker.collect()
+        self.assertFalse(self.repo.source_path(record).exists())
+        self.assertFalse(self.repo.read(self.job).metadata["cleanup_pending"])
+        self.assertEqual(self.repo.read(self.job).error, "encoder failed")
+
+    def test_collection_failure_does_not_skip_later_jobs(self):
+        other = self.repo.create_job(original_filename="other.mp4", expected_size=1,
+            source_language="en", target_language="ko", quality_profile=QualityProfile.BALANCED)
+        self.repo.update_status(self.job, JobStatus.FAILED)
+        self.repo.update_status(other.job_id, JobStatus.FAILED)
+        cleanup = self.worker.cleanup
+        def fail_one(job_id, keep_output=False):
+            if job_id == self.job:
+                raise PermissionError("busy")
+            cleanup(job_id, keep_output)
+        with patch.object(self.repo, "list", return_value=[self.repo.read(self.job), self.repo.read(other.job_id)]), \
+                patch.object(self.worker, "cleanup", side_effect=fail_one), self.assertLogs(level="ERROR"):
+            self.worker.collect()
+        self.assertFalse((self.repo.job_dir(other.job_id) / "input").exists())
+
+    def test_cancelled_transition_does_not_wait_for_state_lock(self):
+        record = self.repo.read(self.job)
+        record.metadata["cancel_requested"] = True
+        self.repo.save(record)
+        with job_lock(self.repo, self.job), self.assertRaises(Cancelled):
+            self.worker.transition(self.job, JobStatus.TRANSLATING)
+
+    def test_transition_survives_actual_state_lock_contention(self):
+        waiting = Event()
+        def pause(seconds):
+            waiting.set()
+            sleep(seconds)
+        with ThreadPoolExecutor(max_workers=1) as pool, \
+                patch("video_service.locking.time.sleep", side_effect=pause):
+            with job_lock(self.repo, self.job):
+                future = pool.submit(self.worker.transition, self.job, JobStatus.TRANSLATING)
+                self.assertTrue(waiting.wait(1), "Worker did not retry the occupied lock")
+                self.assertFalse(future.done())
+            self.assertEqual(future.result(timeout=2).status, JobStatus.TRANSLATING)
 
 
 if __name__ == "__main__":
