@@ -128,8 +128,6 @@ class FilesystemJobRepository:
         return self.save(record)
 
     def delete_job_dir(self, job_id: str) -> None:
-        if self.preserve_artifacts:
-            raise PermissionError("Development artifact preservation is enabled")
         target = self.job_dir(job_id)
         if target.exists():
             shutil.rmtree(target)

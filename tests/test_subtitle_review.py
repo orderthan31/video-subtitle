@@ -84,7 +84,7 @@ class SubtitleReviewTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/api/jobs/{self.job}/cancel").status_code, 200)
         self.assertEqual(self.repo.read(self.job).status, JobStatus.CANCELLED)
         self.worker.collect()
-        self.assertFalse(self.repo.source_path(self.record).exists())
+        self.assertTrue(self.repo.source_path(self.record).exists())
 
     def test_live_execution_lock_blocks_editor_write(self):
         with job_lock(self.repo, self.job, "execution"):

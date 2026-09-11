@@ -12,8 +12,8 @@ includes model and all prompts. Results are validated for count and nonempty
 strings, then assembled in source order with unchanged sentence timestamps.
 Retry skips successful batches, including those after a failed batch. A partial
 failure stores partial-translated*.json and a contiguous-prefix partial SRT;
-encoding is not started with missing translations. Development preservation
-continues to protect failed job files.
+encoding is not started with missing translations. Failed job files are retained
+in every environment until explicit user deletion or an age-based cleanup batch.
 
 The web UI reports completed/total batches, requests in flight, retry wait and
 draining state for the current target language. This is batch progress, not ETA.

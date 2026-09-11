@@ -54,7 +54,7 @@ class ShutdownTests(unittest.TestCase):
         self.assertEqual(record.status, JobStatus.FAILED)
         self.assertTrue(record.metadata["interrupted"])
         self.assertIn("shutting down", record.error)
-        self.assertFalse(self.repo.source_path(current).exists())
+        self.assertTrue(self.repo.source_path(current).exists())
         self.assertEqual(self.repo.read(queued.job_id).status, JobStatus.QUEUED)
         self.assertTrue(self.repo.source_path(queued).exists())
         with job_lock(self.repo, current.job_id, "execution"):
@@ -94,7 +94,7 @@ class ShutdownTests(unittest.TestCase):
             self.worker.process(record.job_id)
         self.assertEqual(len(children), 1)
         self.assertIsNotNone(children[0].poll())
-        self.assertFalse((self.repo.job_dir(record.job_id) / "work").exists())
+        self.assertTrue((self.repo.job_dir(record.job_id) / "work").exists())
         self.assertTrue(self.repo.read(record.job_id).metadata["interrupted"])
 
     def test_signal_handlers_restore_after_error(self):

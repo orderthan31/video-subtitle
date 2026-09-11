@@ -34,13 +34,14 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.worker = Worker(self.repo, None)
         self.repo.source_path(self.record).write_bytes(b"x")
 
-    def test_failed_process_cleans_all_media(self):
+    def test_failed_process_preserves_all_media(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
         with patch("media_worker.worker.select_encoder", side_effect=RuntimeError("encoder unavailable")):
             self.worker.process(self.job)
         self.assertEqual(self.repo.read(self.job).status, JobStatus.FAILED)
         self.assertIn("encoder unavailable", self.repo.read(self.job).error)
-        self.assertEqual({p.name for p in self.repo.job_dir(self.job).iterdir()}, {"job.json"})
+        self.assertTrue(self.repo.source_path(self.record).exists())
+        self.assertTrue((self.repo.job_dir(self.job) / "work").exists())
 
     def test_development_preservation_keeps_failure_and_all_cleanup_outputs(self):
         (self.root / ".preserve-artifacts").touch()
@@ -54,15 +55,14 @@ class WorkerLifecycleTests(unittest.TestCase):
         with patch("media_worker.worker.select_encoder", side_effect=RuntimeError("failure")):
             self.worker.process(self.job)
         self.assertEqual(self.repo.read(self.job).status, JobStatus.FAILED)
-        for keep in (False, True):
-            self.worker.cleanup(self.job, keep_output=keep)
-            self.assertTrue(self.repo.source_path(self.record).exists())
-            self.assertEqual((work / "audio.wav").read_bytes(), b"audio")
-            self.assertEqual((output / "translated.srt").read_text(), "subtitle")
-        with self.assertRaises(PermissionError):
-            self.repo.delete_job_dir(self.job)
+        self.worker.collect(expire=False)
+        self.assertTrue(self.repo.source_path(self.record).exists())
+        self.assertEqual((work / "audio.wav").read_bytes(), b"audio")
+        self.assertEqual((output / "translated.srt").read_text(), "subtitle")
+        self.repo.delete_job_dir(self.job)
+        self.assertFalse(self.repo.job_dir(self.job).exists())
 
-    def test_development_preservation_skips_ttl_and_orphans(self):
+    def test_normal_poll_skips_ttl_but_explicit_batch_can_collect_orphans(self):
         (self.root / ".preserve-artifacts").touch()
         orphan = self.root / uuid4().hex
         orphan.mkdir()
@@ -72,13 +72,13 @@ class WorkerLifecycleTests(unittest.TestCase):
             for status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED,
                     JobStatus.UPLOADING, JobStatus.AWAITING_REVIEW):
                 self.repo.update_status(self.job, status)
-                self.worker.collect()
+                self.worker.collect(expire=False)
                 self.assertEqual(self.repo.read(self.job).status, status)
                 self.assertTrue(self.repo.source_path(self.record).exists())
                 self.assertNotIn("results_expired_at", self.repo.read(self.job).metadata)
         from media_worker.cleanup import collect_orphans
-        self.assertEqual(collect_orphans(self.repo, now=10**12), [])
-        self.assertTrue((orphan / "source.mp4").exists())
+        self.assertEqual(collect_orphans(self.repo, now=10**12), [orphan.name])
+        self.assertFalse(orphan.exists())
 
     def test_pcm_capacity_failure_stops_before_extraction(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
@@ -92,7 +92,7 @@ class WorkerLifecycleTests(unittest.TestCase):
         extract.assert_not_called()
         self.assertEqual(self.repo.read(self.job).status, JobStatus.FAILED)
         self.assertIn("quota", self.repo.read(self.job).error)
-        self.assertFalse(self.repo.source_path(self.record).exists())
+        self.assertTrue(self.repo.source_path(self.record).exists())
 
     def test_completed_pipeline_preserves_original_and_translated_subtitles(self):
         self.record.options.additional_languages = ["ja", "es"]
@@ -150,7 +150,9 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertIn("original.srt", record.metadata["result_files"])
         self.assertIn("translated.smi", record.metadata["result_files"])
         self.assertIn('Start="12000"', (output / "translated.smi").read_text(encoding="utf-8"))
-        self.assertFalse((self.repo.job_dir(self.job) / "work").exists())
+        self.assertTrue((self.repo.job_dir(self.job) / "work").exists())
+        self.assertTrue(self.repo.source_path(self.record).exists())
+        self.assertEqual(audio.read_bytes(), b"audio")
 
     def test_cancel_during_pipeline_stops_before_audio(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
@@ -164,9 +166,9 @@ class WorkerLifecycleTests(unittest.TestCase):
             self.worker.process(self.job)
         extraction.assert_not_called()
         self.assertEqual(self.repo.read(self.job).status, JobStatus.CANCELLED)
-        self.assertFalse(self.repo.source_path(self.record).exists())
+        self.assertTrue(self.repo.source_path(self.record).exists())
 
-    def test_additional_translation_failure_fails_entire_job_and_cleans_media(self):
+    def test_additional_translation_failure_preserves_media(self):
         self.record.options.additional_languages = ["ja"]
         self.repo.save(self.record)
         self.repo.update_status(self.job, JobStatus.QUEUED)
@@ -190,7 +192,8 @@ class WorkerLifecycleTests(unittest.TestCase):
         record = self.repo.read(self.job)
         self.assertEqual(record.status, JobStatus.FAILED)
         self.assertIn("additional translation failed", record.error)
-        self.assertEqual({p.name for p in self.repo.job_dir(self.job).iterdir()}, {"job.json"})
+        self.assertTrue(self.repo.source_path(self.record).exists())
+        self.assertEqual(audio.read_bytes(), b"audio")
 
     def test_partial_transcription_is_preserved_without_translation_or_encoding(self):
         (self.root / ".preserve-artifacts").touch()
@@ -240,33 +243,29 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.repo.update_status(self.job, JobStatus.COMPLETED)
         self.worker.collect()
         self.assertTrue(output.exists())
-        self.assertFalse(self.repo.source_path(self.record).exists())
+        self.assertTrue(self.repo.source_path(self.record).exists())
         record = self.repo.read(self.job)
         record.completed_at = "2000-01-01T00:00:00+00:00"
         self.repo.save(record)
         self.worker.collect()
         self.assertFalse(self.repo.job_dir(self.job).exists())
 
-    def test_cleanup_failure_preserves_original_error_and_gc_retries(self):
+    def test_failure_never_invokes_cleanup_and_legacy_pending_does_not_delete(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        def fail_input(root, path):
-            if path.name == "input":
-                raise PermissionError("file in use")
-            remove_path_inside(root, path)
         with patch("media_worker.worker.select_encoder", side_effect=RuntimeError("encoder failed")), \
-                patch("media_worker.worker.remove_path_inside", side_effect=fail_input), \
-                self.assertLogs(level="WARNING"):
+                patch.object(self.worker, "cleanup") as cleanup:
             self.worker.process(self.job)
+            cleanup.assert_not_called()
         record = self.repo.read(self.job)
         self.assertEqual(record.status, JobStatus.FAILED)
         self.assertEqual(record.error, "encoder failed")
-        self.assertTrue(record.metadata["cleanup_pending"])
-        self.assertIn("input", record.metadata["cleanup_error"])
+        record.metadata["cleanup_pending"] = True
+        self.repo.save(record)
         self.assertTrue(self.repo.source_path(record).exists())
-        self.assertFalse((self.repo.job_dir(self.job) / "work").exists())
-        self.assertFalse((self.repo.job_dir(self.job) / "output").exists())
+        self.assertTrue((self.repo.job_dir(self.job) / "work").exists())
+        self.assertTrue((self.repo.job_dir(self.job) / "output").exists())
         self.worker.collect()
-        self.assertFalse(self.repo.source_path(record).exists())
+        self.assertTrue(self.repo.source_path(record).exists())
         self.assertFalse(self.repo.read(self.job).metadata["cleanup_pending"])
         self.assertEqual(self.repo.read(self.job).error, "encoder failed")
 
@@ -275,12 +274,17 @@ class WorkerLifecycleTests(unittest.TestCase):
             source_language="en", target_language="ko", quality_profile=QualityProfile.BALANCED)
         self.repo.update_status(self.job, JobStatus.FAILED)
         self.repo.update_status(other.job_id, JobStatus.FAILED)
+        for job_id in (self.job, other.job_id):
+            record = self.repo.read(job_id)
+            record.completed_at = "2026-09-01T00:00:00+00:00"
+            self.repo.save(record)
         cleanup = self.worker.cleanup
         def fail_one(job_id, keep_output=False):
             if job_id == self.job:
                 raise PermissionError("busy")
             cleanup(job_id, keep_output)
-        with patch.object(self.repo, "list", return_value=[self.repo.read(self.job), self.repo.read(other.job_id)]), \
+        with patch.dict("os.environ", {"RESULT_TTL_HOURS": "0", "HISTORY_TTL_DAYS": "100000"}), \
+                patch.object(self.repo, "list", return_value=[self.repo.read(self.job), self.repo.read(other.job_id)]), \
                 patch.object(self.worker, "cleanup", side_effect=fail_one), self.assertLogs(level="ERROR"):
             self.worker.collect()
         self.assertFalse((self.repo.job_dir(other.job_id) / "input").exists())

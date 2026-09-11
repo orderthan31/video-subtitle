@@ -51,8 +51,6 @@ class Worker:
             return self.repository.update_status(job_id, status, metadata=metadata, **kwargs)
 
     def cleanup(self, job_id, keep_output=False):
-        if self.repository.preserve_artifacts:
-            return
         root = self.repository.storage_root
         errors = []
         for name in (["input", "work"] if keep_output else ["input", "work", "output"]):
@@ -263,20 +261,12 @@ class Worker:
                     record.options.subtitle_mode, record.options.resolution,
                     subtitle_count=len(languages))
                 validate_decodable(target, work, check)
-                self.transition(job_id, JobStatus.CLEANING)
                 size = target.stat().st_size
-                self.cleanup(job_id, keep_output=True)
                 self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size,
                     "duration": final["duration"], "encoder": encoder,
                     "result_files": result_files})
             except (Exception, KeyboardInterrupt) as exc:
                 cancelled = isinstance(exc, (Cancelled, KeyboardInterrupt))
-                cleanup_error = None
-                try:
-                    self.cleanup(job_id)
-                except OSError as cleanup_exc:
-                    cleanup_error = str(cleanup_exc)
-                    logging.warning("Media cleanup deferred for job %s: %s", job_id, cleanup_error)
                 with wait_for_job_lock(repo, job_id):
                     current = repo.read(job_id)
                     cancelled = cancelled or current.metadata.get("cancel_requested", False)
@@ -284,11 +274,11 @@ class Worker:
                         error=None if cancelled else str(exc), metadata={"stage_progress": None,
                             "interrupted": isinstance(exc, WorkerStopping),
                             "failed_stage": current.status.value,
-                            "cleanup_pending": cleanup_error is not None, "cleanup_error": cleanup_error})
+                            "cleanup_pending": False, "cleanup_error": None})
                 if isinstance(exc, KeyboardInterrupt):
                     raise
 
-    def collect(self):
+    def collect(self, *, expire=True):
         if self.stop.is_set():
             return
         result_ttl = float(os.getenv("RESULT_TTL_HOURS", "24")) * 3600
@@ -298,7 +288,8 @@ class Worker:
         if any(not math.isfinite(value) or value < 0 for value in (result_ttl, history_ttl, upload_ttl, review_ttl)):
             raise ValueError("Retention periods must be finite and nonnegative")
         history_ttl = max(history_ttl, result_ttl)
-        collect_orphans(self.repository, grace_seconds=float(os.getenv("ORPHAN_GRACE_HOURS", "2")) * 3600)
+        if expire:
+            collect_orphans(self.repository, grace_seconds=float(os.getenv("ORPHAN_GRACE_HOURS", "2")) * 3600)
         now = datetime.now(timezone.utc)
         for record in self.repository.list():
             if self.stop.is_set():
@@ -306,18 +297,16 @@ class Worker:
             try:
                 with job_lock(self.repository, record.job_id, "execution"), job_lock(self.repository, record.job_id):
                     record = self.repository.read(record.job_id)
-                    if self.repository.preserve_artifacts and record.status in (
-                        *TERMINAL_STATUSES, JobStatus.UPLOADING, JobStatus.AWAITING_REVIEW,
-                    ):
+                    if not expire and record.status in (*TERMINAL_STATUSES, JobStatus.UPLOADING, JobStatus.AWAITING_REVIEW):
                         continue
                     age = (now - datetime.fromisoformat(record.completed_at or record.updated_at)).total_seconds()
                     if record.status in TERMINAL_STATUSES:
                         if age > history_ttl:
                             self.repository.delete_job_dir(record.job_id)
                             continue
-                        expired = record.status == JobStatus.COMPLETED and (
-                            age > result_ttl or bool(record.metadata.get("results_expired_at")))
-                        self.cleanup(record.job_id, keep_output=record.status == JobStatus.COMPLETED and not expired)
+                        expired = age > result_ttl or bool(record.metadata.get("results_expired_at"))
+                        if expired:
+                            self.cleanup(record.job_id)
                         changed = False
                         if record.metadata.get("cleanup_pending"):
                             record.metadata.update(cleanup_pending=False, cleanup_error=None)
@@ -341,8 +330,8 @@ class Worker:
                                 message="업로드 보관 기간이 만료되었습니다.",
                                 metadata={"upload_expired_at": now.isoformat()})
                     elif record.status not in {JobStatus.QUEUED, JobStatus.READY}:
-                        self.cleanup(record.job_id)
-                        self.repository.update_status(record.job_id, JobStatus.FAILED, error="Worker interrupted; upload again")
+                        self.repository.update_status(record.job_id, JobStatus.FAILED, error="Worker interrupted; retry to resume",
+                            metadata={"interrupted": True, "failed_stage": record.status.value})
             except (JobBusyError, JobNotFoundError):
                 continue
             except OSError:
@@ -358,7 +347,7 @@ class Worker:
     def _tick_serial(self):
         if self.stop.is_set():
             return
-        self.collect()
+        self.collect(expire=False)
         jobs = self.repository.find_by_statuses([JobStatus.QUEUED])
         for job in sorted(jobs, key=lambda item: (item.metadata.get("queued_at", item.created_at), item.job_id)):
             if self.stop.is_set():
@@ -381,12 +370,19 @@ class Worker:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--collect-only", action="store_true", help="Delete expired artifacts once; do not process jobs")
+    args = parser.parse_args()
     load_environment()
     logging.basicConfig(level=logging.INFO)
     repo = FilesystemJobRepository(Path(os.getenv("VIDEO_STORAGE_ROOT", "data/video-jobs")).resolve())
-    worker = Worker(repo, GeminiProvider())
+    worker = Worker(repo, None if args.collect_only else GeminiProvider())
     with shutdown_signals(worker.stop):
-        worker.run(float(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "5")))
+        if args.collect_only:
+            worker.collect()
+        else:
+            worker.run(float(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "5")))
 
 
 if __name__ == "__main__":

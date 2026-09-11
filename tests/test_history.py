@@ -103,6 +103,32 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/jobs/{self.job_id}").status_code, 404)
         self.assertEqual(self.repo.list(), [])
 
+    def test_manual_delete_is_allowed_with_development_marker(self):
+        (self.root / ".preserve-artifacts").touch()
+        self.assertEqual(self.client.delete(f"/api/jobs/{self.job_id}").status_code, 204)
+        self.assertFalse(self.repo.job_dir(self.job_id).exists())
+
+    def test_worker_poll_preserves_expired_artifacts_until_explicit_collection(self):
+        (self.root / ".preserve-artifacts").touch()
+        self.age(2)
+        self.worker.tick()
+        self.assertTrue(self.output.exists())
+        self.assertTrue(self.repo.source_path(self.repo.read(self.job_id)).exists())
+        self.worker.collect()
+        self.assertFalse(self.output.exists())
+
+    def test_recent_terminal_jobs_keep_all_artifacts_without_marker(self):
+        work = self.repo.job_dir(self.job_id) / "work"
+        (work / "audio.wav").write_bytes(b"audio")
+        (work / "original.srt").write_text("subtitle")
+        for status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+            self.repo.update_status(self.job_id, status)
+            self.worker.collect()
+            self.assertTrue(self.output.exists())
+            self.assertTrue(self.repo.source_path(self.repo.read(self.job_id)).exists())
+            self.assertEqual((work / "audio.wav").read_bytes(), b"audio")
+            self.assertEqual((work / "original.srt").read_text(), "subtitle")
+
     def test_download_protects_history_expiry(self):
         self.age(91)
         with download_lock(self.repo, self.job_id):

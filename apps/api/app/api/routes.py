@@ -282,8 +282,6 @@ def delete_job(job_id: str) -> None:
         record = _read_job_or_404(job_id)
         if record.status not in TERMINAL_STATUSES:
             raise HTTPException(status_code=409, detail="작업을 취소한 후 삭제하세요.")
-        if repository.preserve_artifacts:
-            raise HTTPException(status_code=409, detail="개발 중 파일 보존 설정이 켜져 있어 삭제할 수 없습니다.")
         repository.delete_job_dir(job_id)
 
 
