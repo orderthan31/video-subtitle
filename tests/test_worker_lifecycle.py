@@ -88,6 +88,8 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertNotIn("Translated speech.", original)
         self.assertIn("Translated speech.", translated)
         self.assertIn("original.srt", record.metadata["result_files"])
+        self.assertIn("translated.smi", record.metadata["result_files"])
+        self.assertIn('Start="12000"', (output / "translated.smi").read_text(encoding="utf-8"))
         self.assertFalse((self.repo.job_dir(self.job) / "work").exists())
 
     def test_cancel_during_pipeline_stops_before_audio(self):

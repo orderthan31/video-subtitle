@@ -10,6 +10,7 @@ from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.storage import remove_path_inside, write_json_atomic
 from video_service.subtitles import segments_to_srt, segment_subtitles
+from video_service.sami import segments_to_sami
 from video_service.timeline import map_segment_to_original
 from video_service.transcript import filter_transcript_segments
 from .media import probe, extract_audio, preprocess_audio, encoding_args, select_encoder
@@ -133,6 +134,7 @@ class Worker:
                 output = repo.job_dir(job_id) / "output"
                 output.mkdir(exist_ok=True)
                 (output / "translated.srt").write_text(srt, encoding="utf-8")
+                (output / "translated.smi").write_text(segments_to_sami(cues, record.options.target_language), encoding="utf-8")
                 original_cues = segment_subtitles(segments,
                     line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
                 validate_cues(original_cues, metadata["duration"])
@@ -157,7 +159,7 @@ class Worker:
                 self.cleanup(job_id, keep_output=True)
                 self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size,
                     "duration": final["duration"], "encoder": encoder,
-                    "result_files": ["final.mp4", "translated.srt", "original.srt"]})
+                    "result_files": ["final.mp4", "translated.srt", "original.srt", "translated.smi"]})
             except (Exception, KeyboardInterrupt) as exc:
                 cancelled = isinstance(exc, (Cancelled, KeyboardInterrupt))
                 cleanup_error = None

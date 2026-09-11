@@ -12,7 +12,7 @@ class UploadCreateRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     size: int = Field(gt=0)
     source_language: str = "auto"
-    target_language: str = "ko"
+    target_language: str = Field(default="ko", pattern=r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
     quality_profile: QualityProfile = QualityProfile.BALANCED
 
 

@@ -8,12 +8,12 @@ from video_service.storage import resolve_under
 
 class ResultResponse(FileResponse):
     def __init__(self, repository, job_id, filename):
-        if filename not in {"final.mp4", "translated.srt", "original.srt"}:
+        if filename not in {"final.mp4", "translated.srt", "original.srt", "translated.smi"}:
             raise HTTPException(status_code=404, detail="결과 파일을 찾을 수 없습니다.")
         self.repository = repository
         self.job_id = job_id
         path = resolve_under(repository.storage_root, job_id, "output", filename)
-        super().__init__(path=path, filename=filename)
+        super().__init__(path=path, filename=filename, media_type="text/plain" if filename.endswith(".smi") else None)
 
     async def __call__(self, scope, receive, send):
         with download_lock(self.repository, self.job_id):

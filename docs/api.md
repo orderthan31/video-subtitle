@@ -130,3 +130,10 @@ GET /api/jobs/{job_id}/results/translated.srt
 식별자가 없으면 이전 API처럼 매번 새 작업을 생성한다. 식별자는 작업 메타데이터와 함께 영속화되며, 작업이 삭제되거나 TTL로 정리된 뒤에는 보존되지 않는다. 현재 익명 서비스에서는 전역 식별자이며 인증 기능 추가 시 사용자 범위로 분리해야 한다. 요청 식별자는 인증 수단이 아니다.
 
 웹은 생성 응답을 받지 못해 다시 시작 버튼을 눌러도 같은 파일·옵션이면 동일 식별자를 사용한다. 파일 재선택 또는 옵션 변경은 새 요청으로 처리한다. 페이지 새로고침 시 클라이언트 식별자는 유지되지 않으므로 기존 작업 목록에서 재개한다. 이 기능은 생성 응답 유실 이후 중복 생성 방지이며 영상 내용 동일성 검증은 별도의 업로드 재개 SHA-256 절차가 담당한다.
+## 번역 SMI
+
+새 작업의 `metadata.result_files`에 `translated.smi`가 추가된다. `GET /api/jobs/{job_id}/results/translated.smi`는 UTF-8 파일을 `text/plain` 첨부파일로 반환하며, 기존 결과와 동일한 다운로드·삭제 경합 보호를 적용한다. 웹은 파일 목록에 있을 때만 SMI 링크를 표시한다.
+
+SMI는 기존 번역 cue를 SAMI 형식으로 직렬화한다. `SYNC Start`는 밀리초 단위이며 종료 시각에는 `&nbsp;`로 자막을 지운다. 근거: [Microsoft SAMI 1.0](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/dnacc/understanding-sami-1.0). 태그처럼 보이는 번역 내용은 이스케이프하고 실제 줄바꿈만 `BR`로 변환한다.
+
+업로드의 `target_language`는 `ko`, `en`, `ja`, `zh`, `es`, `pt-BR`와 같은 2~3자리 소문자 기본 언어 코드와 선택적 하위 태그 형식으로 검증한다. 언어 이름 문장이나 CSS 구문은 생성 전에 422로 거부한다. 플레이어별 문자 인코딩·스타일 차이는 별도 검증 대상이다.
