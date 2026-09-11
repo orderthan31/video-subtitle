@@ -1,8 +1,15 @@
 FROM python:3.12-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
+ARG WITH_NVIDIA_VAD=0
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fontconfig fonts-noto-cjk ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+RUN if [ "$WITH_NVIDIA_VAD" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends build-essential libsndfile1 \
+      && rm -rf /var/lib/apt/lists/* \
+      && pip install --no-cache-dir torch==2.14.0+cpu torchaudio==2.11.0+cpu --index-url https://download.pytorch.org/whl/cpu \
+      && pip install --no-cache-dir 'nemo_toolkit[asr]==3.0.0'; \
+    fi
 COPY packages/shared /app/packages/shared
 COPY apps/api /app/apps/api
 COPY workers/media /app/workers/media

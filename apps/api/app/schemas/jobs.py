@@ -21,6 +21,7 @@ class UploadCreateRequest(BaseModel):
     audio_filter: Literal["off", "conservative", "strong", "silence3"] = "silence3"
     review_subtitles: bool = False
     video_description: str = Field(default="", max_length=2000)
+    vad_mode: Literal["off", "nvidia"] = "off"
 
     @model_validator(mode="after")
     def validate_languages(self):
@@ -73,6 +74,7 @@ class JobResponse(BaseModel):
     audio_filter: str
     review_subtitles: bool
     video_description: str = ""
+    vad_mode: str = "off"
     status_message: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -115,6 +117,7 @@ def job_to_response(record: JobRecord) -> JobResponse:
         audio_filter=record.options.audio_filter,
         review_subtitles=record.options.review_subtitles,
         video_description=record.options.video_description,
+        vad_mode=record.options.vad_mode,
         status_message=record.status_message,
         error=record.error,
         metadata=record.metadata,

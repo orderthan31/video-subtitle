@@ -78,8 +78,11 @@ class JobOptions:
     audio_filter: str = "silence3"
     review_subtitles: bool = False
     video_description: str = ""
+    vad_mode: str = "off"
 
     def __post_init__(self):
+        if self.vad_mode not in {"off", "nvidia"}:
+            raise ValueError("Unsupported VAD mode")
         if not isinstance(self.video_description, str) or len(self.video_description) > 2000:
             raise ValueError("Video description must be at most 2000 characters")
         self.video_description = self.video_description.strip()
@@ -107,6 +110,7 @@ class JobOptions:
             audio_filter=str(data.get("audio_filter", "conservative")),
             review_subtitles=bool(data.get("review_subtitles", False)),
             video_description=data.get("video_description", ""),
+            vad_mode=data.get("vad_mode", "off"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -121,6 +125,7 @@ class JobOptions:
             "audio_filter": self.audio_filter,
             "review_subtitles": self.review_subtitles,
             "video_description": self.video_description,
+            "vad_mode": self.vad_mode,
         }
 
 

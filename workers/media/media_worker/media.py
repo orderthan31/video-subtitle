@@ -91,7 +91,9 @@ def copy_audio_intervals(source, destination, intervals, check=lambda: None):
     return build_timeline_from_kept_intervals(actual)
 
 
-def preprocess_audio(source, work, check=lambda: None, audio_filter="conservative", vocalizations=None, protected_audio=None):
+def preprocess_audio(source, work, check=lambda: None, audio_filter="conservative", vocalizations=None, protected_audio=None, vad_mode="off"):
+    if vad_mode not in {"off", "nvidia"}:
+        raise ValueError("Unsupported VAD mode")
     if audio_filter not in {"off", "conservative", "strong", "silence3"}:
         raise ValueError("Unsupported audio filter")
     with wave.open(str(source), "rb") as audio:
@@ -112,6 +114,11 @@ def preprocess_audio(source, work, check=lambda: None, audio_filter="conservativ
             from .vocalizations import exclude_protected, subtract_intervals
             vocalizations = exclude_protected(vocalizations, protected_audio or [], duration)
             intervals = subtract_intervals(intervals, vocalizations, duration)
+    if vad_mode == "nvidia":
+        from .nvidia_vad import detect_intervals
+        speech = detect_intervals(source, work, check)
+        intervals = [(max(a, c), min(b, d)) for a, b in intervals for c, d in speech
+                     if min(b, d) > max(a, c)]
     output = work / "processed-audio.wav"
     spans = copy_audio_intervals(source, output, intervals, check)
     write_json_atomic(work / "timeline-map.json", [span.to_dict() for span in spans])

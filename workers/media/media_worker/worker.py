@@ -13,7 +13,8 @@ from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.storage import remove_path_inside, write_json_atomic
 from video_service.subtitles import segments_to_srt, segment_subtitles
 from video_service.sami import segments_to_sami
-from video_service.timeline import map_segment_to_original, TimelineSpan
+from video_service.timeline import TimelineSpan
+from .packed_timeline import restore_segments
 from video_service.transcript import filter_transcript_segments, TranscriptSegment
 from .media import probe, extract_audio, preprocess_audio, encoding_args, select_encoder
 from .process import run_process, Cancelled
@@ -113,7 +114,7 @@ class Worker:
                 source = repo.source_path(record).resolve()
                 checkpoints = Checkpoints(work, {"version": 1, "source_size": source.stat().st_size,
                     "source_mtime": source.stat().st_mtime_ns, "options": {key: value for key, value in record.options.to_dict().items()
-                        if key != "video_description" or value},
+                        if (key != "video_description" or value) and (key != "vad_mode" or value != "off")},
                     "stt": getattr(self.provider, "transcription_model", None),
                     "transcription_policy": transcription_prompt(record.options.source_language, 0),
                     "translation": getattr(self.provider, "translation_model", None),
@@ -152,6 +153,7 @@ class Worker:
                         write_json_atomic(work / "vocalization-analysis.json", analysis)
                     def prepare_audio():
                         processed, timeline = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter,
+                            vad_mode=record.options.vad_mode,
                             vocalizations=vocalizations, protected_audio=protected_audio)
                         return {"audio": processed.name, "spans": [span.to_dict() for span in timeline]}
                     prepared = checkpoints.run("preprocess", prepare_audio,
@@ -170,12 +172,12 @@ class Worker:
                             current.status_message = "진행 중 요청 회수 중" if value["draining"] else "음성 전사 중"
                             repo.save(current)
                     try:
-                        segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe-parallel-60-v1", lambda: [
+                        segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe-packed-60-v2", lambda: [
                             s.to_dict() for s in self.provider.transcribe(audio, record.options.source_language, check,
                                 spans=spans, work=work, progress=transcription_progress)])]
                     except PartialTranscriptionError as exc:
-                        partial = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in exc.segments]
-                        prefix = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in exc.prefix]
+                        partial = restore_segments(exc.segments, spans, work / "partial-cross-boundary.json")
+                        prefix = restore_segments(exc.prefix, spans, work / "partial-prefix-cross-boundary.json")
                         write_json_atomic(work / "partial-transcript.json", {"incomplete": True,
                             "failed_segments": [index + 1 for index in exc.failed],
                             "segments": [s.to_dict() for s in filter_transcript_segments(partial, record.options.audio_filter)]})
@@ -183,7 +185,7 @@ class Worker:
                             line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
                         (work / "partial-original.srt").write_text(segments_to_srt(cues), encoding="utf-8")
                         raise
-                    segments = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in segments]
+                    segments = restore_segments(segments, spans, work / "cross-boundary.json")
                     self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
                     segments = filter_transcript_segments(segments, record.options.audio_filter)
                     write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
@@ -201,7 +203,7 @@ class Worker:
                                 current.status_message = "진행 중 번역 요청 회수 중" if value["draining"] else "자막 번역 중"
                                 repo.save(current)
                         try:
-                            translated = [TranscriptSegment.from_dict(item) for item in checkpoints.run("translate-parallel-40-v1-" + language,
+                            translated = [TranscriptSegment.from_dict(item) for item in checkpoints.run("translate-packed-40-v2-" + language,
                                 lambda: [s.to_dict() for s in self.provider.translate(segments, language, check,
                                     work=work, progress=translation_progress,
                                     video_description=record.options.video_description)])]

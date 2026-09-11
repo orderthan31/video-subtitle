@@ -69,7 +69,7 @@ class UploadCreationTests(unittest.TestCase):
         for changes in ({"filename": "other.mp4"}, {"size": 7}, {"source_language": "en"},
                         {"target_language": "ja"}, {"quality_profile": "high"}, {"video_codec": "h264"},
                         {"subtitle_mode": "soft"}, {"resolution": "720p"}, {"additional_languages": ["ja"]},
-                        {"audio_filter": "off"}, {"review_subtitles": True}, {"video_description": "A comedy"}):
+                        {"audio_filter": "off"}, {"review_subtitles": True}, {"video_description": "A comedy"}, {"vad_mode": "nvidia"}):
             response = self.client.post("/api/uploads", json={**self.payload, **changes})
             self.assertEqual(response.status_code, 409)
         self.assertEqual(len(self.repo.list()), 1)
@@ -96,6 +96,19 @@ class UploadCreationTests(unittest.TestCase):
         self.assertEqual(self.repo.read(job_id).options.video_codec, "h264")
         self.assertEqual(self.client.get(f"/api/jobs/{job_id}").json()["video_codec"], "h264")
         self.assertEqual(self.client.post("/api/uploads", json={**self.payload, "video_codec": "av1"}).status_code, 422)
+
+    def test_vad_defaults_off_and_roundtrips(self):
+        from video_service.models import JobOptions
+        self.assertEqual(JobOptions().vad_mode, "off")
+        self.assertEqual(JobOptions.from_dict({}).vad_mode, "off")
+        with self.assertRaises(ValueError):
+            JobOptions(vad_mode="invalid")
+        response = self.client.post("/api/uploads", json={**self.payload, "vad_mode": "nvidia"})
+        self.assertEqual(response.status_code, 201)
+        job_id = response.json()["job_id"]
+        self.assertEqual(self.repo.read(job_id).options.vad_mode, "nvidia")
+        self.assertEqual(self.client.get(f"/api/jobs/{job_id}").json()["vad_mode"], "nvidia")
+        self.assertEqual(self.client.post("/api/uploads", json={**self.payload, "vad_mode": "bad"}).status_code, 422)
 
     def test_old_records_default_to_hevc(self):
         from video_service.models import JobOptions

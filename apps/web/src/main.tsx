@@ -25,6 +25,7 @@ function App() {
   const [subtitleMode,setSubtitleMode] = useState('burn');
   const [resolution,setResolution] = useState('original');
   const [audioFilter,setAudioFilter] = useState('silence3');
+  const [vadMode,setVadMode] = useState<'off'|'nvidia'>('off');
   const [videoDescription,setVideoDescription] = useState('');
   const [reviewSubtitles,setReviewSubtitles] = useState(false), [reviewJob,setReviewJob] = useState<Job|null>(null);
   const [filter,setFilter] = useState('all');
@@ -91,7 +92,7 @@ function App() {
     if (!file) return;
     queue.add(file, {filename:file.name,size:file.size,source_language:source,target_language:target,
       quality_profile:quality,video_codec:codec,subtitle_mode:subtitleMode,resolution,
-      audio_filter:audioFilter,review_subtitles:reviewSubtitles,video_description:videoDescription.trim()}, resumeId || undefined);
+      audio_filter:audioFilter,vad_mode:vadMode,review_subtitles:reviewSubtitles,video_description:videoDescription.trim()}, resumeId || undefined);
     setFile(null); setResumeId(''); setVideoDescription(''); setFilter('all'); setError('');
     if (input.current) input.current.value = '';
   }
@@ -140,6 +141,7 @@ function App() {
           <label>해상도<select value={resolution} disabled={!!resumeId} onChange={e=>setResolution(e.target.value)}><option value="original">원본 유지</option><option value="1080p">최대 1080p</option><option value="720p">최대 720p</option></select></label>
           <label>오디오 필터<select value={audioFilter} disabled={!!resumeId} onChange={e=>setAudioFilter(e.target.value)}><option value="silence3">3초 이상 무음</option><option value="off">끄기</option><option value="conservative">보수적 · 10초 이상 무음</option><option value="strong">강하게 · 5초 이상 무음</option></select></label>
           <div className="output-format"><span>결과 파일</span><strong>MP4 + SRT</strong></div>
+          <label className="review-toggle"><input type="checkbox" checked={vadMode==='nvidia'} disabled={!!resumeId} onChange={e=>setVadMode(e.target.checked?'nvidia':'off')}/>NVIDIA 음성 감지 (대사 누락 가능)</label>
           <label className="review-toggle"><input type="checkbox" checked={reviewSubtitles} disabled={!!resumeId} onChange={e=>setReviewSubtitles(e.target.checked)}/>자막 검토 후 출력</label>
           <button className="primary" disabled={!file||!online} onClick={start}><Upload size={18}/>{resumeId?'업로드 재개':'업로드'}</button>
           {resumeId&&<button className="text-button" onClick={()=>{setResumeId('');setFile(null);setVideoDescription('');}}>새 파일로 돌아가기</button>}
@@ -168,7 +170,7 @@ function App() {
           {job.status==='COMPLETED'&&!job.metadata.results_expired_at&&!!job.additional_languages?.length&&<details className="extra-downloads"><summary role="button" aria-label="추가 자막"><Download size={16}/>추가 자막</summary><div>{job.additional_languages.map(language=><React.Fragment key={language}>{['srt','smi'].map(format=>{const filename=`translated.${language}.${format}`;return job.metadata.result_files?.includes(filename)&&<a key={format} className="download" href={`${base}/jobs/${job.job_id}/results/${filename}`}><Download size={16}/>{languageName(language)} {format.toUpperCase()}</a>;})}</React.Fragment>)}</div></details>}
           {job.status==='AWAITING_REVIEW'&&<button className="icon" title="자막 수정" onClick={()=>setReviewJob(job)}><Pencil size={18}/></button>}
           {job.status==='READY'&&<button className="icon" title="처리 시작" disabled={!!pending} onClick={()=>void retry(job,'start')}><Play size={18}/></button>}
-          {job.status==='UPLOADING'&&<button className="icon" title="업로드 재개" onClick={()=>{setResumeId(job.job_id);setFile(null);setSource(job.source_language);setTarget(job.target_language);setQuality(job.quality_profile);setCodec(job.video_codec||'hevc');setSubtitleMode(job.subtitle_mode||'burn');setResolution(job.resolution||'original');setAudioFilter(job.audio_filter||'conservative');setReviewSubtitles(job.review_subtitles||false);setVideoDescription(job.video_description||'');}}><Play size={18}/></button>}
+          {job.status==='UPLOADING'&&<button className="icon" title="업로드 재개" onClick={()=>{setResumeId(job.job_id);setFile(null);setSource(job.source_language);setTarget(job.target_language);setQuality(job.quality_profile);setCodec(job.video_codec||'hevc');setSubtitleMode(job.subtitle_mode||'burn');setResolution(job.resolution||'original');setAudioFilter(job.audio_filter||'conservative');setVadMode(job.vad_mode||'off');setReviewSubtitles(job.review_subtitles||false);setVideoDescription(job.video_description||'');}}><Play size={18}/></button>}
           {['FAILED','CANCELLED'].includes(job.status)&&<button className="icon" title="중단된 작업 재시도" disabled={pending===job.job_id} onClick={()=>void retry(job)}><RefreshCw size={18}/></button>}
           {terminal(job)?<button className="icon danger" title="작업 삭제" disabled={pending===job.job_id} onClick={()=>setConfirm(job)}><Trash2 size={18}/></button>:<button className="icon danger" title="작업 취소" disabled={pending===job.job_id||!!job.metadata.cancel_requested} onClick={()=>void action(job,'cancel')}><X size={18}/></button>}
         </div><StageProgress job={job}/></article>:null;})}</div>

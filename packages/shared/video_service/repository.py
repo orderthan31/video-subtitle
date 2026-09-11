@@ -38,6 +38,7 @@ class FilesystemJobRepository:
         audio_filter: str = "silence3",
         review_subtitles: bool = False,
         video_description: str = "",
+        vad_mode: str = "off",
     ) -> JobRecord:
         job_id = uuid4().hex
         source_filename = f"source{safe_suffix(original_filename)}"
@@ -52,7 +53,7 @@ class FilesystemJobRepository:
             source_filename=source_filename,
             expected_size=expected_size,
             options=JobOptions(source_language, target_language, quality_profile, video_codec, subtitle_mode, resolution,
-                list(additional_languages or []), audio_filter, review_subtitles, video_description),
+                list(additional_languages or []), audio_filter, review_subtitles, video_description, vad_mode),
             metadata=dict(metadata or {}),
         )
         self.save(record)

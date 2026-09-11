@@ -13,7 +13,7 @@ from unittest.mock import Mock, AsyncMock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.providers import GeminiProvider, WordTimestampError, parse_word_transcriptions, transcription_windows
-from video_service.timeline import build_timeline_from_kept_intervals, map_segment_to_original
+from video_service.timeline import build_timeline_from_kept_intervals, project_segment_to_original
 from sdk_fixture import sdk_fixture
 
 
@@ -92,7 +92,7 @@ class TranscriptionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             next(transcription_windows(200, 100, spans))
 
-    def test_join_requests_and_restored_cues_do_not_cross_silence(self):
+    def test_packed_request_crosses_join_but_restored_cues_do_not_cross_silence(self):
         folder = ROOT / "data/test-runs" / uuid.uuid4().hex
         folder.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, folder)
@@ -105,8 +105,7 @@ class TranscriptionTests(unittest.TestCase):
         async def request(parts, *args, **kwargs):
             with wave.open(io.BytesIO(base64.b64decode(parts[1]["inlineData"]["data"]))) as chunk:
                 frames.append(chunk.readframes(chunk.getnframes()))
-            # Model rounding can extend slightly past the submitted audio.
-            return [{"start": 0, "end": 1.05, "text": "Speech"}]
+            return [{"start": 0, "end": 2, "text": "Speech"}]
 
         provider = GeminiProvider.__new__(GeminiProvider)
         provider.transcription_model = "test-model"
@@ -114,8 +113,8 @@ class TranscriptionTests(unittest.TestCase):
         spans = build_timeline_from_kept_intervals([(0, 1), (21, 22)])
         check = Mock()
         segments = provider.transcribe(source, "en", check, spans=spans)
-        self.assertEqual(frames, [b"\x01\x00" * 100, b"\x02\x00" * 100])
-        self.assertEqual([map_segment_to_original(s.start, s.end, spans) for s in segments],
+        self.assertEqual(frames, [b"\x01\x00" * 100 + b"\x02\x00" * 100])
+        self.assertEqual([piece for s in segments for piece in project_segment_to_original(s.start, s.end, spans)],
             [(0, 1), (21, 22)])
         self.assertGreaterEqual(check.call_count, 1)
 

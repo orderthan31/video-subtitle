@@ -91,3 +91,19 @@ def map_segment_to_original(start: float, end: float, spans: list[TimelineSpan])
     if mapped_end < mapped_start:
         mapped_end = mapped_start
     return mapped_start, mapped_end
+
+
+def project_segment_to_original(start: float, end: float, spans: list[TimelineSpan]) -> list[tuple[float, float]]:
+    """Split a packed-clock cue at removed gaps instead of stretching through them."""
+    result = []
+    for span in spans:
+        left, right = max(start, span.processed_start), min(end, span.processed_end)
+        if right <= left:
+            continue
+        a = span.original_start + left - span.processed_start
+        b = span.original_start + right - span.processed_start
+        if result and abs(a - result[-1][1]) < 1e-8:
+            result[-1] = (result[-1][0], b)
+        else:
+            result.append((a, b))
+    return result

@@ -1,0 +1,14 @@
+services:
+  worker:
+    build:
+      context: .
+      args:
+        WITH_NVIDIA_VAD: "1"
+    environment:
+      NVIDIA_VAD_PYTHON: /usr/local/bin/python
+      NVIDIA_VAD_MODEL: /models/vad_multilingual_marblenet.nemo
+    volumes:
+      - type: bind
+        source: ${NVIDIA_VAD_MODEL_DIR:?Set NVIDIA_VAD_MODEL_DIR to the directory containing the NVIDIA model}
+        target: /models
+        read_only: true

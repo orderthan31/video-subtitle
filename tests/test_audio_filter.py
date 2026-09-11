@@ -59,6 +59,28 @@ class AudioFilterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             filter_transcript_segments([], "invalid")
 
+    def test_vad_off_never_loads_ml(self):
+        with patch("media_worker.nvidia_vad.detect_intervals") as detect:
+            preprocess_audio(self.source, self.work, audio_filter="off")
+        detect.assert_not_called()
+
+    def test_vad_intersects_silence_in_original_clock(self):
+        log = self.work / "silence.log"
+        log.write_text("silence_start: 2\nsilence_end: 6\n", encoding="utf-8")
+        with patch("media_worker.media.run_process", return_value=log), patch(
+                "media_worker.nvidia_vad.detect_intervals", return_value=[(1, 3), (10, 12)]) as detect:
+            output, spans = preprocess_audio(self.source, self.work, audio_filter="silence3", vad_mode="nvidia")
+        self.assertEqual(detect.call_args.args[0], self.source)
+        self.assertEqual([(s.original_start, s.original_end) for s in spans], [(1, 2.2), (10, 12)])
+        with wave.open(str(output), "rb") as audio:
+            self.assertEqual(audio.getnframes(), 3200)
+        self.assertEqual(self.source.stat().st_size, len(self.pcm) + 44)
+
+    def test_vad_errors_do_not_silently_fall_back(self):
+        with patch("media_worker.nvidia_vad.detect_intervals", side_effect=RuntimeError("missing model")):
+            with self.assertRaisesRegex(RuntimeError, "missing model"):
+                preprocess_audio(self.source, self.work, audio_filter="off", vad_mode="nvidia")
+
     def test_three_second_filter_removes_four_second_pause(self):
         log = self.work / "silence.log"
         log.write_text("silence_start: 2\nsilence_end: 6\n", encoding="utf-8")

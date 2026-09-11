@@ -7,6 +7,7 @@ export type Job = {
   job_id: string; status: string; original_filename: string; expected_size: number; uploaded_bytes: number;
   target_language: string; quality_profile: string; created_at: string; completed_at: string | null;
   video_description?: string;
+  vad_mode?: 'off'|'nvidia';
   source_language: string; video_codec?: string; subtitle_mode?: string; resolution?: string; additional_languages?: string[]; audio_filter?: string; review_subtitles?: boolean;
   error: string | null; status_message?: string | null;
   metadata: {cancel_requested?: boolean; duration?: number; stage_progress?: number | null; result_files?: string[]; failed_stage?: string;
