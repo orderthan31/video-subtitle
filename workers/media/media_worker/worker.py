@@ -14,6 +14,7 @@ from video_service.transcript import filter_transcript_segments
 from .media import probe, extract_audio, preprocess_audio, encoding_args, select_encoder
 from .process import run_process, Cancelled
 from .providers import GeminiProvider
+from .cleanup import collect_orphans
 from video_service.config import load_environment
 from video_service.capacity import assert_capacity
 
@@ -124,6 +125,7 @@ class Worker:
                     raise
 
     def collect(self):
+        collect_orphans(self.repository, grace_seconds=float(os.getenv("ORPHAN_GRACE_HOURS", "2")) * 3600)
         now = datetime.now(timezone.utc)
         for record in self.repository.list():
             try:

@@ -73,7 +73,7 @@ class FilesystemJobRepository:
         for path in sorted(self.storage_root.glob("*/job.json"), reverse=True):
             try:
                 records.append(JobRecord.from_dict(read_json(path)))
-            except (OSError, ValueError, KeyError):
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 continue
         records.sort(key=lambda record: record.updated_at, reverse=True)
         return records
