@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.providers import GeminiProvider, WordTimestampError, parse_word_transcriptions, transcription_windows
 from video_service.timeline import build_timeline_from_kept_intervals, map_segment_to_original
+from sdk_fixture import sdk_fixture
 
 
 class TranscriptionTests(unittest.TestCase):
@@ -133,7 +134,7 @@ class TranscriptionTests(unittest.TestCase):
         client.__aenter__.return_value = client
         client.post.return_value = httpx.Response(200, json={"candidates": [{
             "finishReason": "STOP", "content": {"parts": parts}}]})
-        with patch("media_worker.providers.httpx.AsyncClient", return_value=client):
+        with patch.object(provider, "_client", sdk_fixture(client.post)):
             words = asyncio.run(provider._request([], None, lambda: None, "test-model", {"wordTimestamp": True}))
         self.assertEqual([word["text"] for word in words], ["Hello", "world."])
 

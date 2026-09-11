@@ -3,6 +3,7 @@ import sys
 import unittest
 from unittest.mock import AsyncMock, patch
 import json
+import base64
 import shutil
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.providers import GeminiProvider, retry_delay
 from media_worker.process import Cancelled
 from media_worker.llm_trace import capture_calls, audio_window
+from sdk_fixture import sdk_fixture
 
 
 class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
@@ -21,7 +23,7 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
         self.provider.key = "test-only"
         self.client = AsyncMock()
         self.client.__aenter__.return_value = self.client
-        self.patcher = patch("media_worker.providers.httpx.AsyncClient", return_value=self.client)
+        self.patcher = patch.object(self.provider, "_client", sdk_fixture(self.client.post))
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
         self.success = httpx.Response(200, json={"candidates": [{"finishReason": "STOP",
@@ -73,6 +75,22 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
         calls = self.client.post.call_args_list
         self.assertEqual(len(calls), 3)
         self.assertTrue(all(call.kwargs["json"] == calls[0].kwargs["json"] for call in calls))
+
+    async def test_sdk_serializes_native_audio_and_transcription_config(self):
+        self.client.post.return_value = self.transcription_response("0s", "1s")
+        audio = b"RIFF-test-audio"
+        await self.provider._request([{"inlineData": {"mimeType": "audio/wav",
+            "data": base64.b64encode(audio).decode("ascii")}}], None, lambda: None,
+            "gemini-3.5-transcribe", {"wordTimestamp": True, "mode": "VERBATIM", "languageCodes": ["en-US"]})
+        call = self.client.post.call_args
+        self.assertIn("/models/gemini-3.5-transcribe:generateContent", call.args[0])
+        payload = call.kwargs["json"]
+        inline = payload["contents"][0]["parts"][0]["inlineData"]
+        self.assertEqual(base64.b64decode(inline["data"]), audio)
+        self.assertEqual(inline["mimeType"], "audio/wav")
+        # The official SDK uses protobuf snake_case for this nested config.
+        self.assertEqual(payload["generationConfig"]["audioTranscriptionConfig"],
+            {"word_timestamp": True, "mode": "VERBATIM", "language_codes": ["en-US"]})
 
     async def test_persistent_invalid_timing_fails_bounded_without_private_text(self):
         self.client.post.return_value = self.transcription_response("1s", "1s")

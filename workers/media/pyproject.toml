@@ -2,7 +2,7 @@
 name = "video-subtitle-worker"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["video-service-shared", "httpx>=0.28"]
+dependencies = ["video-service-shared", "google-genai==2.23.0", "httpx>=0.28.1,<1"]
 
 [project.scripts]
 video-media-worker = "media_worker.worker:main"

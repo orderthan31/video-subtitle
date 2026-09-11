@@ -15,6 +15,7 @@ sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.process import run_process
 from media_worker.shutdown import shutdown_signals, WorkerStopping
 from media_worker.providers import GeminiProvider
+from sdk_fixture import sdk_fixture
 from media_worker.worker import Worker
 from video_service.locking import job_lock
 from video_service.models import JobStatus, QualityProfile
@@ -116,7 +117,7 @@ class ShutdownTests(unittest.TestCase):
         client = AsyncMock()
         client.__aenter__.return_value = client
         client.post.side_effect = pending
-        with patch("media_worker.providers.httpx.AsyncClient", return_value=client), \
+        with patch.object(provider, "_client", sdk_fixture(client.post)), \
                 self.assertRaises(WorkerStopping):
             asyncio.run(provider._request([], {}, self.worker.check_stopping, "test-model"))
         self.assertEqual(ended, [True])

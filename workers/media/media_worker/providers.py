@@ -9,8 +9,11 @@ import re
 import wave
 import time
 from email.utils import parsedate_to_datetime
+from contextlib import asynccontextmanager
 
 import httpx
+from google import genai
+from google.genai import errors, types
 from video_service.transcript import TranscriptSegment
 from video_service.config import load_environment
 from video_service.timeline import identity_timeline
@@ -27,26 +30,63 @@ class GeminiProvider:
         if not self.key or not all(re.fullmatch(r"[a-zA-Z0-9_.-]+", model) for model in (self.transcription_model, self.translation_model, self.audio_filter_model)):
             raise ValueError("Set GEMINI_API_KEY and valid transcription/translation model names")
 
+    @asynccontextmanager
+    async def _client(self, response_hook):
+        async with httpx.AsyncClient(timeout=120, event_hooks={"response": [response_hook]}) as transport:
+            sdk = genai.Client(api_key=self.key, vertexai=False, http_options=types.HttpOptions(
+                api_version="v1beta", timeout=120000, httpx_async_client=transport,
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ))
+            try:
+                async with sdk.aio as client:
+                    yield client
+            finally:
+                sdk.close()
+
     async def _request(self, parts, schema, check, model, transcription_config=None):
-        async with httpx.AsyncClient(timeout=120) as client:
+        response = None
+        trace = None
+
+        async def capture_response(value):
+            nonlocal response
+            await value.aread()
+            response = value
+            finish_call(trace, self.key, status=value.status_code, body=value.text,
+                sent_request_body=value.request.content.decode("utf-8"))
+
+        sdk_parts = []
+        for part in parts:
+            if "inlineData" in part:
+                inline = part["inlineData"]
+                sdk_parts.append(types.Part.from_bytes(data=base64.b64decode(inline["data"], validate=True),
+                    mime_type=inline["mimeType"]))
+            else:
+                sdk_parts.append(types.Part.model_validate(part))
+        config = types.GenerateContentConfig(
+            audio_transcription_config=types.AudioTranscriptionConfig.model_validate(transcription_config),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        ) if transcription_config is not None else types.GenerateContentConfig(
+            response_mime_type="application/json", response_schema=schema,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+        async with self._client(capture_response) as client:
             for attempt in range(3):
                 check()
                 payload = {"contents": [{"role": "user", "parts": parts}],
                     "generationConfig": ({"audioTranscriptionConfig": transcription_config} if transcription_config is not None
                         else {"responseMimeType": "application/json", "responseSchema": schema})}
                 trace = begin_call(model, attempt + 1, payload, self.key)
-                task = asyncio.create_task(client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                    headers={"x-goog-api-key": self.key},
-                    json=payload,
-                ))
+                task = asyncio.create_task(client.models.generate_content(model=model,
+                    contents=[types.Content(role="user", parts=sdk_parts)], config=config))
                 response = None
                 try:
                     while not task.done():
                         await asyncio.wait({task}, timeout=0.25)
                         check()
-                    response = await task
-                    finish_call(trace, self.key, status=response.status_code, body=response.text)
+                    await task
+                except errors.APIError:
+                    if response is None:
+                        raise RuntimeError("Gemini SDK failed without an HTTP response") from None
                 except httpx.TransportError as error:
                     finish_call(trace, self.key, transport_error=type(error).__name__)
                     if attempt == 2:
