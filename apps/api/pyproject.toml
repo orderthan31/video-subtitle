@@ -1,0 +1,16 @@
+[project]
+name = "video-subtitle-api"
+version = "0.1.0"
+description = "FastAPI backend for resumable video subtitle jobs."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.8.0",
+  "video-service-shared",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+

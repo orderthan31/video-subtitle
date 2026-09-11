@@ -1,0 +1,10 @@
+[project]
+name = "video-service-shared"
+version = "0.1.0"
+description = "Shared domain models and utilities for the video subtitle monorepo."
+requires-python = ">=3.12"
+dependencies = ["python-dotenv>=1.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["video_service*"]

@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from video_service.models import JobRecord, JobStatus, QualityProfile
+
+
+class UploadCreateRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    size: int = Field(gt=0)
+    source_language: str = "auto"
+    target_language: str = "ko"
+    quality_profile: QualityProfile = QualityProfile.BALANCED
+
+
+class UploadCreateResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    uploaded_bytes: int
+    expected_size: int
+
+
+class UploadStatusResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    uploaded_bytes: int
+    expected_size: int
+    resumable: bool
+
+
+class ChunkUploadResponse(BaseModel):
+    job_id: str
+    uploaded_bytes: int
+    expected_size: int
+
+
+class JobResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    original_filename: str
+    expected_size: int
+    uploaded_bytes: int
+    source_language: str
+    target_language: str
+    quality_profile: str
+    status_message: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+    completed_at: str | None = None
+
+
+class JobListResponse(BaseModel):
+    jobs: list[JobResponse]
+
+
+def job_to_response(record: JobRecord) -> JobResponse:
+    return JobResponse(
+        job_id=record.job_id,
+        status=record.status,
+        original_filename=record.original_filename,
+        expected_size=record.expected_size,
+        uploaded_bytes=record.uploaded_bytes,
+        source_language=record.options.source_language,
+        target_language=record.options.target_language,
+        quality_profile=record.options.quality_profile.value,
+        status_message=record.status_message,
+        error=record.error,
+        metadata=record.metadata,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        completed_at=record.completed_at,
+    )
+
