@@ -128,6 +128,9 @@ class Worker:
                 output = repo.job_dir(job_id) / "output"
                 output.mkdir(exist_ok=True)
                 (output / "translated.srt").write_text(srt, encoding="utf-8")
+                original_cues = segment_subtitles(segments,
+                    line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
+                (output / "original.srt").write_text(segments_to_srt(original_cues), encoding="utf-8")
                 (work / "translated.srt").write_text(srt, encoding="utf-8")
                 self.transition(job_id, JobStatus.ENCODING, message="인코딩 슬롯 대기 중")
                 target = (output / "final.mp4").resolve()
@@ -149,7 +152,9 @@ class Worker:
                 self.transition(job_id, JobStatus.CLEANING)
                 size = target.stat().st_size
                 self.cleanup(job_id, keep_output=True)
-                self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size, "duration": final["duration"], "encoder": encoder})
+                self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size,
+                    "duration": final["duration"], "encoder": encoder,
+                    "result_files": ["final.mp4", "translated.srt", "original.srt"]})
             except (Exception, KeyboardInterrupt) as exc:
                 cancelled = isinstance(exc, (Cancelled, KeyboardInterrupt))
                 cleanup_error = None

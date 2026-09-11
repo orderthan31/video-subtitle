@@ -8,7 +8,7 @@ from video_service.storage import resolve_under
 
 class ResultResponse(FileResponse):
     def __init__(self, repository, job_id, filename):
-        if filename not in {"final.mp4", "translated.srt"}:
+        if filename not in {"final.mp4", "translated.srt", "original.srt"}:
             raise HTTPException(status_code=404, detail="결과 파일을 찾을 수 없습니다.")
         self.repository = repository
         self.job_id = job_id

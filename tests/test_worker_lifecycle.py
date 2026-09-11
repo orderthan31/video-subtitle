@@ -5,7 +5,8 @@ from time import sleep
 import shutil
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from contextlib import ExitStack
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,8 @@ from video_service.storage import remove_path_inside
 from video_service.locking import job_lock
 from video_service.models import JobStatus, QualityProfile
 from video_service.repository import FilesystemJobRepository
+from video_service.timeline import build_timeline_from_kept_intervals
+from video_service.transcript import TranscriptSegment
 
 
 class WorkerLifecycleTests(unittest.TestCase):
@@ -37,6 +40,37 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(self.repo.read(self.job).status, JobStatus.FAILED)
         self.assertIn("encoder unavailable", self.repo.read(self.job).error)
         self.assertEqual({p.name for p in self.repo.job_dir(self.job).iterdir()}, {"job.json"})
+
+    def test_completed_pipeline_preserves_original_and_translated_subtitles(self):
+        self.repo.update_status(self.job, JobStatus.QUEUED)
+        provider = Mock()
+        provider.transcribe.return_value = [TranscriptSegment(0, 1, "Original speech.")]
+        provider.translate.side_effect = lambda segments, language, check: [s.with_text("Translated speech.") for s in segments]
+        worker = Worker(self.repo, provider)
+        audio = self.repo.job_dir(self.job) / "work/audio.wav"
+        metadata = {"duration": 14, "streams": [
+            {"codec_type": "video", "avg_frame_rate": "30/1"}, {"codec_type": "audio"}]}
+        def encode(args, **kwargs):
+            Path(args[-1]).write_bytes(b"output")
+        with ExitStack() as stack:
+            stack.enter_context(patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"))
+            stack.enter_context(patch("media_worker.worker.probe", return_value=metadata))
+            stack.enter_context(patch("media_worker.worker.extract_audio", return_value=audio))
+            stack.enter_context(patch("media_worker.worker.preprocess_audio", return_value=(audio,
+                build_timeline_from_kept_intervals([(12, 13)]))))
+            stack.enter_context(patch("media_worker.worker.run_process", side_effect=encode))
+            worker.process(self.job)
+        record = self.repo.read(self.job)
+        self.assertEqual(record.status, JobStatus.COMPLETED, record.error)
+        output = self.repo.job_dir(self.job) / "output"
+        original = (output / "original.srt").read_text(encoding="utf-8")
+        translated = (output / "translated.srt").read_text(encoding="utf-8")
+        self.assertIn("00:00:12,000 --> 00:00:13,000", original)
+        self.assertIn("Original speech.", original)
+        self.assertNotIn("Translated speech.", original)
+        self.assertIn("Translated speech.", translated)
+        self.assertIn("original.srt", record.metadata["result_files"])
+        self.assertFalse((self.repo.job_dir(self.job) / "work").exists())
 
     def test_cancel_during_pipeline_stops_before_audio(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)

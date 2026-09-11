@@ -89,6 +89,13 @@ with download_lock(FilesystemJobRepository(sys.argv[2]), sys.argv[3]):
             self.assertEqual(response.headers["content-range"], "bytes 2-5/10")
             self.assertEqual(client.get(url + "final.mp4", headers={"Range": "bytes=30-40"}).status_code, 416)
             self.assertEqual(client.get(url + "translated.srt").status_code, 404)
+            self.assertEqual(client.get(url + "original.srt").status_code, 404)
+            original = "1\n00:00:01,000 --> 00:00:02,000\nHello.\n"
+            (self.output.parent / "original.srt").write_text(original, encoding="utf-8", newline="\n")
+            response = client.get(url + "original.srt")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content.decode("utf-8"), original)
+            self.assertIn("original.srt", response.headers["content-disposition"])
             self.assertEqual(client.get(url + "other.txt").status_code, 404)
             self.repo.update_status(self.job, JobStatus.QUEUED)
             self.assertEqual(client.get(url + "final.mp4").status_code, 409)

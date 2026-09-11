@@ -118,3 +118,8 @@ GET /api/jobs/{job_id}/results/translated.srt
 다운로드 중 작업 삭제는 HTTP 409와 `Retry-After: 1`을 반환한다. GC는 해당 작업을 건너뛰고 다음 순회에서 TTL을 다시 검사한다. 연결 취소·응답 예외 시 잠금을 해제하며, API 프로세스가 비정상 종료해도 OS 잠금이 풀려 다음 정리에서 잔여 잠금 파일을 회수할 수 있다.
 
 기존 Range 요청(206/416)은 유지한다. 파일 경로만 ASGI 서버에 넘기는 `pathsend` 최적화는 전송보다 잠금이 먼저 풀리지 않도록 사용하지 않는다. 잠금 보호는 개별 HTTP 전송에 적용되며, 다운로드 요청 사이 또는 이후 재생 세션 전체의 TTL 연장을 의미하지 않는다.
+## 원문 SRT
+
+새 완료 작업은 `final.mp4`, `translated.srt`, `original.srt`를 `metadata.result_files`에 제공한다. 원문은 필터링된 전사 결과에 원본 영상 시간을 복원하고 자막 줄바꿈을 적용한 UTF-8 SRT이며, 번역 문자열로 덮어쓰지 않는다.
+
+`GET /api/jobs/{job_id}/results/original.srt`는 기존 결과와 동일한 완료 상태 검사·Range·다운로드 잠금 보호를 적용한다. 원문 파일이 없는 이전 작업은 404를 반환하며, 웹은 `result_files`에 있는 경우에만 원문 링크를 표시한다. 작업 삭제 및 TTL 정리는 세 파일 모두에 적용된다.

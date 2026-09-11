@@ -4,6 +4,8 @@
 
 ## 구현 및 검증
 
+- 원문 SRT 후속 기능 구현: 원본 영상 시간으로 복원한 전사에서 `original.srt`를 생성하고 완료 후 보존한다. API 다운로드와 `metadata.result_files` 기반 웹 원문/번역 링크를 추가해 기존 작업에는 없는 원문 파일을 표시하지 않는다. 생성·시간 복원·번역 분리·다운로드 회귀 포함 총 81개 테스트 및 웹 빌드 통과. 실제 Gemini→NVENC 작업 `774683ec6cef432c8ecdb0dcf612a2e6`에서 원문 3개 구간과 HTTP 응답, 데스크톱 링크 표시를 확인했다. 보고서: `data/live-smoke/ba0e8282aacd4aae89d32e887cca419f/report.json`.
+
 - STT 겹침 처리를 문장 단위에서 단어 타임스탬프 단위로 변경했다. 각 60초 담당 구간의 단어를 선택한 뒤 문장을 묶으며 무음 제거 경계는 계속 분리한다. 60초 경계 문장의 중복 방지·의도적 반복 보존 등 총 80개 테스트 통과. 실제 합성 음성을 58초에 배치한 Gemini 두 요청에서 기대 단어열이 모두 일치했고 59.4~61.9초 문장이 복원됐다. 재현: `scripts/smoke-transcription-boundary.py --run-live --audio data/stt-smoke.wav --expected-text "Hello Welcome to the subtitle test The weather is sunny today"`. 보고서: `data/transcription-boundary/5d290cd4fae14f378b3adb32113608f1/report.json` (Git 제외).
 
 - FFmpeg 8.0.1 호환 빌드를 SHA-256 검증 후 별도 설치했다. RTX 5070 Ti/591.86에서 128x128 사전 검사의 최소 프레임 크기 오류를 발견해 640x360으로 수정했다. fallback 없이 실제 Gemini 전사·번역→NVENC 번인 MP4 출력·한글 프레임·임시 파일 정리 확인. [GPU 검증 기록](gpu-verification.md) 참고. 회귀 테스트 총 77개 통과. 로컬 `.env`만 호환 경로로 지정했고 드라이버는 변경하지 않았다.
@@ -68,7 +70,7 @@
 - 긴 저비트레이트 영상의 PCM 전개 용량 예약 및 용량 검사 사이 출력 증가 제한 보강.
 - Docker가 있는 환경에서 이미지 빌드·Compose 기동·볼륨 권한·GPU 실행 검증.
 - 30~60분/1~5GB 영상 E2E, 모바일 재생/Seek, 자막 싱크와 정리 검증.
-- 후속 범위: SMI, 원문 SRT, 소프트 자막, H.264, 해상도 선택, 다중 번역 언어, 자막 편집, 필터 강도, 작업 이력, 인증. 요구사항 범위는 유지하며 아직 미구현이다.
+- 미구현 후속 범위: SMI, 소프트 자막, H.264, 해상도 선택, 다중 번역 언어, 자막 편집, 필터 강도, 작업 이력, 인증. 원문 SRT는 구현했으며 모바일 저장 동작 검증은 남아 있다.
 
 ## 참고한 공식 문서
 
