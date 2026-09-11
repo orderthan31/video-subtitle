@@ -97,7 +97,7 @@ def is_non_speech_text(text: str) -> bool:
 
 
 def filter_transcript_segments(segments: Iterable[TranscriptSegment], audio_filter="conservative") -> list[TranscriptSegment]:
-    if audio_filter not in {"off", "conservative", "strong"}:
+    if audio_filter not in {"off", "conservative", "strong", "silence3"}:
         raise ValueError("Unsupported audio filter")
     if audio_filter == "off":
         return [segment for segment in segments if segment.text.strip()]

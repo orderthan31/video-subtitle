@@ -92,14 +92,14 @@ def copy_audio_intervals(source, destination, intervals, check=lambda: None):
 
 
 def preprocess_audio(source, work, check=lambda: None, audio_filter="conservative", vocalizations=None, protected_audio=None):
-    if audio_filter not in {"off", "conservative", "strong"}:
+    if audio_filter not in {"off", "conservative", "strong", "silence3"}:
         raise ValueError("Unsupported audio filter")
     with wave.open(str(source), "rb") as audio:
         duration = audio.getnframes() / audio.getframerate()
     if audio_filter == "off":
         intervals = [(0, duration)]
     else:
-        minimum = 5 if audio_filter == "strong" else 10
+        minimum = {"silence3": 3, "strong": 5, "conservative": 10}[audio_filter]
         log = run_process([executable("ffmpeg"), "-nostdin", "-i", source,
             "-af", f"silencedetect=noise=-45dB:d={minimum}", "-f", "null", "-"],
             cwd=work, log_name="silence.log", check=check)

@@ -75,7 +75,7 @@ class JobOptions:
     subtitle_mode: str = "burn"
     resolution: str = "original"
     additional_languages: list[str] = field(default_factory=list)
-    audio_filter: str = "conservative"
+    audio_filter: str = "silence3"
     review_subtitles: bool = False
     video_description: str = ""
 
@@ -84,7 +84,7 @@ class JobOptions:
             raise ValueError("Video description must be at most 2000 characters")
         self.video_description = self.video_description.strip()
         validate_additional_languages(self.target_language, self.additional_languages)
-        if self.audio_filter not in {"off", "conservative", "strong"}:
+        if self.audio_filter not in {"off", "conservative", "strong", "silence3"}:
             raise ValueError("Unsupported audio filter")
         if self.video_codec not in {"hevc", "h264"}:
             raise ValueError("Unsupported video codec")

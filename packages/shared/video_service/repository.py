@@ -35,7 +35,7 @@ class FilesystemJobRepository:
         subtitle_mode: str = "burn",
         resolution: str = "original",
         additional_languages: list[str] | None = None,
-        audio_filter: str = "conservative",
+        audio_filter: str = "silence3",
         review_subtitles: bool = False,
         video_description: str = "",
     ) -> JobRecord:

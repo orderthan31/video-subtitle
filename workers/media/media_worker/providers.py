@@ -73,10 +73,15 @@ class GeminiProvider:
             response_mime_type="application/json", response_schema=schema,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
+        config.safety_settings = [types.SafetySetting(category=category, threshold="OFF") for category in (
+            "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")]
         async with self._client(capture_response) as client:
             for attempt in range(max_attempts):
                 check()
                 payload = {"contents": [{"role": "user", "parts": parts}],
+                    "safetySettings": [{"category": setting.category.value, "threshold": setting.threshold.value}
+                        for setting in config.safety_settings],
                     "generationConfig": ({"audioTranscriptionConfig": transcription_config} if transcription_config is not None
                         else {"responseMimeType": "application/json", "responseSchema": schema})}
                 trace = begin_call(model, trace_attempt or attempt + 1, payload, self.key)

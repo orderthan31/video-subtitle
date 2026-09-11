@@ -49,7 +49,7 @@ class AudioFilterTests(unittest.TestCase):
     def test_plain_interjections_are_preserved_at_every_strength(self):
         words = ["아", "어", "음", "핫", "Yes", "Ah!", "[breath]", ""]
         segments = [TranscriptSegment(i, i + 1, text) for i, text in enumerate(words)]
-        for mode in ("off", "conservative", "strong"):
+        for mode in ("off", "conservative", "strong", "silence3"):
             actual = [s.text for s in filter_transcript_segments(segments, mode)]
             self.assertEqual(actual, words[:-1] if mode == "off" else words[:-2])
 
@@ -58,3 +58,13 @@ class AudioFilterTests(unittest.TestCase):
             preprocess_audio(self.source, self.work, audio_filter="invalid")
         with self.assertRaises(ValueError):
             filter_transcript_segments([], "invalid")
+
+    def test_three_second_filter_removes_four_second_pause(self):
+        log = self.work / "silence.log"
+        log.write_text("silence_start: 2\nsilence_end: 6\n", encoding="utf-8")
+        with patch("media_worker.media.run_process", return_value=log) as run:
+            output, spans = preprocess_audio(self.source, self.work, audio_filter="silence3")
+        self.assertIn("silencedetect=noise=-45dB:d=3", run.call_args.args[0])
+        with wave.open(str(output), "rb") as audio:
+            self.assertEqual(audio.getnframes(), 16400)
+        self.assertAlmostEqual(map_segment_to_original(3, 4, spans)[0], 6.6)

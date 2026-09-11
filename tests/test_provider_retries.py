@@ -94,6 +94,8 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
         call = self.client.post.call_args
         self.assertIn("/models/gemini-3.5-transcribe:generateContent", call.args[0])
         payload = call.kwargs["json"]
+        self.assertEqual(len(payload["safetySettings"]), 4)
+        self.assertTrue(all(setting["threshold"] == "OFF" for setting in payload["safetySettings"]))
         inline = payload["contents"][0]["parts"][0]["inlineData"]
         self.assertEqual(base64.b64decode(inline["data"]), audio)
         self.assertEqual(inline["mimeType"], "audio/wav")

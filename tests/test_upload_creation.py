@@ -88,6 +88,7 @@ class UploadCreationTests(unittest.TestCase):
         second = self.client.post("/api/uploads", json=payload).json()
         self.assertNotEqual(first["job_id"], second["job_id"])
         self.assertEqual(self.client.post("/api/uploads", json={**payload, "request_id": "invalid"}).status_code, 422)
+        self.assertEqual(self.repo.read(first["job_id"]).options.audio_filter, "silence3")
 
     def test_codec_is_validated_persisted_and_returned(self):
         response = self.client.post("/api/uploads", json={**self.payload, "video_codec": "h264"})

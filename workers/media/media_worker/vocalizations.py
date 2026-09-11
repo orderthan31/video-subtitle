@@ -43,9 +43,9 @@ def validated_events(items, duration, offset=0):
 
 
 def candidates_without_speech(events, strength):
-    if strength not in {"conservative", "strong"}:
+    if strength not in {"conservative", "strong", "silence3"}:
         raise ValueError("Unsupported vocalization filter strength")
-    guard = 0.3 if strength == "conservative" else 0.15
+    guard = 0.15 if strength == "strong" else 0.3
     protected = [event for event in events if event["kind"] in {"speech", "uncertain"} or not event["certain"]]
     candidates = []
     for event in events:
@@ -72,7 +72,7 @@ def audio_part(audio, first, last):
 def detect_vocalizations(provider, source, language, check, strength="conservative"):
     if strength == "off":
         return {"removals": [], "protected": []}
-    if strength not in {"conservative", "strong"}:
+    if strength not in {"conservative", "strong", "silence3"}:
         raise ValueError("Unsupported vocalization filter strength")
     events = []
     with wave.open(str(source), "rb") as audio:

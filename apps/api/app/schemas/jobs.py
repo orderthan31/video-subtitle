@@ -18,7 +18,7 @@ class UploadCreateRequest(BaseModel):
     subtitle_mode: Literal["burn", "soft"] = "burn"
     resolution: Literal["original", "1080p", "720p"] = "original"
     additional_languages: list[str] = Field(default_factory=list, max_length=4)
-    audio_filter: Literal["off", "conservative", "strong"] = "conservative"
+    audio_filter: Literal["off", "conservative", "strong", "silence3"] = "silence3"
     review_subtitles: bool = False
     video_description: str = Field(default="", max_length=2000)
 
