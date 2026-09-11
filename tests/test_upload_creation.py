@@ -46,7 +46,7 @@ class UploadCreationTests(unittest.TestCase):
         for changes in ({"filename": "other.mp4"}, {"size": 7}, {"source_language": "en"},
                         {"target_language": "ja"}, {"quality_profile": "high"}, {"video_codec": "h264"},
                         {"subtitle_mode": "soft"}, {"resolution": "720p"}, {"additional_languages": ["ja"]},
-                        {"audio_filter": "off"}):
+                        {"audio_filter": "off"}, {"review_subtitles": True}):
             response = self.client.post("/api/uploads", json={**self.payload, **changes})
             self.assertEqual(response.status_code, 409)
         self.assertEqual(len(self.repo.list()), 1)

@@ -26,7 +26,8 @@ Content-Type: application/json
   "subtitle_mode": "burn",
   "resolution": "original",
   "additional_languages": ["ja", "es"],
-  "audio_filter": "conservative"
+  "audio_filter": "conservative",
+  "review_subtitles": false
 }
 ```
 
@@ -39,6 +40,16 @@ Content-Type: application/json
 `audio_filter`는 `off`, `conservative`(기본), `strong`이다. off는 PCM 시간축을 그대로 유지하고 빈 전사만 제외한다. 나머지는 -45dB 무음을 각각 10초/5초 이상에서 제거하며 경계에 0.2초를 남긴다. 명시적 독립 비언어 태그도 정리하되 일반 단어/감탄사는 삭제하지 않는다. 선택값은 작업 조회·재개에 유지하며 같은 생성 식별자에서 변경하면 409다. 호흡/기합의 오디오 의미 판별 모델은 아직 포함하지 않는다.
 
 기본 언어 결과는 `translated.srt`/`translated.smi`를 유지하고, 추가 언어는 `translated.{language}.srt`/`translated.{language}.smi`로 제공한다. 다운로드는 완료된 작업의 `metadata.result_files`에 선언된 추가 파일만 허용한다. 번인은 기본 언어만 영상에 표시하며, soft는 선택된 모든 언어를 별도 MP4 트랙에 포함하고 첫 트랙만 default로 지정한다. 모든 언어의 번역/자막 생성이 성공해야 완료하며 일부 언어 실패 시 작업 전체가 실패한다. 공통 전사는 한 번만 실행한다.
+
+`review_subtitles=true`는 전사·번역 후 `AWAITING_REVIEW` 상태로 대기한다. 원본/초안/예약 용량을 유지하며 기본 24시간 뒤 미승인 작업을 취소·정리한다. 기본값 false는 기존 자동 출력이다.
+
+## 자막 검토
+
+`GET /api/jobs/{job_id}/subtitles`는 검토 대기 상태에서 `{revision, duration, languages, tracks}` 초안을 반환한다. tracks 키는 `original`, `translated`와 추가 언어의 `translated.{language}`다. 각 cue는 `{start, end, text, speaker?}`이며 시간 단위는 원본 영상 초다.
+
+`PUT /api/jobs/{job_id}/subtitles`는 `{revision, tracks, action}`을 받는다. action은 `save`(기본) 또는 `render`다. 저장은 revision을 올려 정규화한 초안을 반환하고, render는 저장 후 QUEUED로 승인한다. Worker는 초안을 읽어 AI 재호출 없이 출력 단계로 이어간다. 저장과 승인 사이 프로세스 장애가 발생하면 저장된 새 revision을 다시 조회해 승인할 수 있다.
+
+상태/버전 충돌/실행 잠금은 409, 잘못된 트랙·빈 문구·중첩·영상 범위 초과·밀리초보다 짧은 자막은 422다. 트랙당 최대 10,000 cue, cue당 1,000자와 최대 두 줄이다. 저장 시 기존 언어별 줄바꿈·분할 규칙으로 긴 문구를 원래 시간 구간 안에서 나누며 반환된 초안을 새 기준으로 사용한다. 승인 이후에는 편집할 수 없다. 완료된 작업은 원본이 삭제되므로 이 API로 재편집하지 않는다.
 
 응답:
 

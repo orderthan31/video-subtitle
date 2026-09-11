@@ -21,6 +21,7 @@ class JobStatus(StrEnum):
     FILTERING_TRANSCRIPT = "FILTERING_TRANSCRIPT"
     TRANSLATING = "TRANSLATING"
     GENERATING_SUBTITLE = "GENERATING_SUBTITLE"
+    AWAITING_REVIEW = "AWAITING_REVIEW"
     ENCODING = "ENCODING"
     VALIDATING = "VALIDATING"
     CLEANING = "CLEANING"
@@ -38,6 +39,7 @@ ACTIVE_STATUSES = {
     JobStatus.FILTERING_TRANSCRIPT,
     JobStatus.TRANSLATING,
     JobStatus.GENERATING_SUBTITLE,
+    JobStatus.AWAITING_REVIEW,
     JobStatus.ENCODING,
     JobStatus.VALIDATING,
     JobStatus.CLEANING,
@@ -73,6 +75,7 @@ class JobOptions:
     resolution: str = "original"
     additional_languages: list[str] = field(default_factory=list)
     audio_filter: str = "conservative"
+    review_subtitles: bool = False
 
     def __post_init__(self):
         validate_additional_languages(self.target_language, self.additional_languages)
@@ -97,6 +100,7 @@ class JobOptions:
             resolution=str(data.get("resolution", "original")),
             additional_languages=data.get("additional_languages", []),
             audio_filter=str(data.get("audio_filter", "conservative")),
+            review_subtitles=bool(data.get("review_subtitles", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -109,6 +113,7 @@ class JobOptions:
             "resolution": self.resolution,
             "additional_languages": list(self.additional_languages),
             "audio_filter": self.audio_filter,
+            "review_subtitles": self.review_subtitles,
         }
 
 

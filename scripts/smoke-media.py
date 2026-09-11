@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--frame-size", choices=["640x360", "1920x1080", "2560x1440"], default="640x360")
     parser.add_argument("--additional-language", action="append", default=[])
     parser.add_argument("--audio-filter", choices=["off", "conservative", "strong"], default="conservative")
+    parser.add_argument("--review-subtitles", action="store_true")
     args = parser.parse_args()
     if not args.run_live:
         parser.error("--run-live is required; this test calls Gemini")
@@ -41,7 +42,7 @@ def main():
     record = repo.create_job(original_filename="test.mp4", expected_size=source.stat().st_size,
         source_language="en", target_language="ko", quality_profile=QualityProfile.BALANCED,
         video_codec=args.video_codec, subtitle_mode=args.subtitle_mode, resolution=args.resolution,
-        additional_languages=args.additional_language, audio_filter=args.audio_filter)
+        additional_languages=args.additional_language, audio_filter=args.audio_filter, review_subtitles=args.review_subtitles)
     shutil.copyfile(source, repo.source_path(record))
     repo.update_upload_progress(record.job_id, record.expected_size)
     repo.update_status(record.job_id, JobStatus.QUEUED)
@@ -51,7 +52,8 @@ def main():
         "output": str(repo.job_dir(record.job_id) / "output"), "metadata": record.metadata}
     (work / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
-    raise SystemExit(0 if record.status == JobStatus.COMPLETED else 1)
+    expected = JobStatus.AWAITING_REVIEW if args.review_subtitles else JobStatus.COMPLETED
+    raise SystemExit(0 if record.status == expected else 1)
 
 
 if __name__ == "__main__":

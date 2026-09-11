@@ -32,6 +32,7 @@ class FilesystemJobRepository:
         resolution: str = "original",
         additional_languages: list[str] | None = None,
         audio_filter: str = "conservative",
+        review_subtitles: bool = False,
     ) -> JobRecord:
         job_id = uuid4().hex
         source_filename = f"source{safe_suffix(original_filename)}"
@@ -46,7 +47,7 @@ class FilesystemJobRepository:
             source_filename=source_filename,
             expected_size=expected_size,
             options=JobOptions(source_language, target_language, quality_profile, video_codec, subtitle_mode, resolution,
-                list(additional_languages or []), audio_filter),
+                list(additional_languages or []), audio_filter, review_subtitles),
             metadata=dict(metadata or {}),
         )
         self.save(record)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, UUID4, model_validator
 
@@ -19,6 +19,7 @@ class UploadCreateRequest(BaseModel):
     resolution: Literal["original", "1080p", "720p"] = "original"
     additional_languages: list[str] = Field(default_factory=list, max_length=4)
     audio_filter: Literal["off", "conservative", "strong"] = "conservative"
+    review_subtitles: bool = False
 
     @model_validator(mode="after")
     def validate_languages(self):
@@ -68,6 +69,7 @@ class JobResponse(BaseModel):
     resolution: str
     additional_languages: list[str]
     audio_filter: str
+    review_subtitles: bool
     status_message: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -78,6 +80,19 @@ class JobResponse(BaseModel):
 
 class JobListResponse(BaseModel):
     jobs: list[JobResponse]
+
+
+class SubtitleCue(BaseModel):
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    text: str = Field(min_length=1, max_length=1000)
+    speaker: str | None = Field(default=None, max_length=200)
+
+
+class SubtitleUpdate(BaseModel):
+    revision: int = Field(ge=1)
+    action: Literal["save", "render"] = "save"
+    tracks: dict[str, Annotated[list[SubtitleCue], Field(min_length=1, max_length=10000)]] = Field(min_length=2, max_length=6)
 
 
 def job_to_response(record: JobRecord) -> JobResponse:
@@ -95,6 +110,7 @@ def job_to_response(record: JobRecord) -> JobResponse:
         resolution=record.options.resolution,
         additional_languages=record.options.additional_languages,
         audio_filter=record.options.audio_filter,
+        review_subtitles=record.options.review_subtitles,
         status_message=record.status_message,
         error=record.error,
         metadata=record.metadata,

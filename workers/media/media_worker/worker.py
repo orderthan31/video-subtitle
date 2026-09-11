@@ -7,13 +7,14 @@ import time
 from threading import Event
 
 from video_service.locking import job_lock, JobBusyError, encoding_slot, wait_for_job_lock
-from video_service.models import JobStatus, TERMINAL_STATUSES
+from video_service.models import JobStatus, TERMINAL_STATUSES, utc_now_iso
+from video_service.review import read_draft, write_draft
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.storage import remove_path_inside, write_json_atomic
 from video_service.subtitles import segments_to_srt, segment_subtitles
 from video_service.sami import segments_to_sami
 from video_service.timeline import map_segment_to_original
-from video_service.transcript import filter_transcript_segments
+from video_service.transcript import filter_transcript_segments, TranscriptSegment
 from .media import probe, extract_audio, preprocess_audio, encoding_args, select_encoder
 from .process import run_process, Cancelled
 from .providers import GeminiProvider
@@ -113,32 +114,46 @@ class Worker:
                 reserve_workspace(repo, job_id, metadata["duration"],
                     int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
                     int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), check)
-                self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
-                audio = extract_audio(source, work, check)
-                self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)
-                audio, spans = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter)
-                self.transition(job_id, JobStatus.TRANSCRIBING)
-                segments = self.provider.transcribe(audio, record.options.source_language, check, spans=spans)
-                segments = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in segments]
-                self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
-                segments = filter_transcript_segments(segments, record.options.audio_filter)
-                write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
-                self.transition(job_id, JobStatus.TRANSLATING)
                 languages = [record.options.target_language, *record.options.additional_languages]
-                translations = {}
-                for language in languages:
-                    check()
-                    translations[language] = self.provider.translate(segments, language, check)
+                if record.metadata.get("review_ready"):
+                    draft = read_draft(repo, record)
+                    subtitle_sets = {name: [TranscriptSegment.from_dict(cue) for cue in cues]
+                        for name, cues in draft["tracks"].items()}
+                else:
+                    self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
+                    audio = extract_audio(source, work, check)
+                    self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)
+                    audio, spans = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter)
+                    self.transition(job_id, JobStatus.TRANSCRIBING)
+                    segments = self.provider.transcribe(audio, record.options.source_language, check, spans=spans)
+                    segments = [s.with_times(*map_segment_to_original(s.start, s.end, spans)) for s in segments]
+                    self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
+                    segments = filter_transcript_segments(segments, record.options.audio_filter)
+                    write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
+                    self.transition(job_id, JobStatus.TRANSLATING)
+                    subtitle_sets = {"original": segment_subtitles(segments,
+                        line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)}
+                    for index, language in enumerate(languages):
+                        check()
+                        translated = self.provider.translate(segments, language, check)
+                        stem = "translated" if index == 0 else f"translated.{language}"
+                        write_json_atomic(work / f"{stem}.json", [s.to_dict() for s in translated])
+                        subtitle_sets[stem] = segment_subtitles(translated,
+                            line_width=24 if language.split("-")[0] in {"ko", "ja", "zh"} else 42)
+                    if record.options.review_subtitles:
+                        write_draft(repo, record, {name: [cue.to_dict() for cue in cues]
+                            for name, cues in subtitle_sets.items()}, metadata["duration"], 1)
+                        self.transition(job_id, JobStatus.AWAITING_REVIEW,
+                            metadata={"awaiting_review_at": utc_now_iso()})
+                        return
                 self.transition(job_id, JobStatus.GENERATING_SUBTITLE)
                 output = repo.job_dir(job_id) / "output"
                 output.mkdir(exist_ok=True)
                 result_files = ["final.mp4", "translated.srt", "original.srt", "translated.smi"]
                 for index, language in enumerate(languages):
                     check()
-                    translated = translations[language]
                     stem = "translated" if index == 0 else f"translated.{language}"
-                    write_json_atomic(work / f"{stem}.json", [s.to_dict() for s in translated])
-                    cues = segment_subtitles(translated, line_width=24 if language.split("-")[0] in {"ko", "ja", "zh"} else 42)
+                    cues = subtitle_sets[stem]
                     validate_cues(cues, metadata["duration"])
                     srt = segments_to_srt(cues)
                     (output / f"{stem}.srt").write_text(srt, encoding="utf-8")
@@ -146,8 +161,7 @@ class Worker:
                     (work / f"{stem}.srt").write_text(srt, encoding="utf-8")
                     if index:
                         result_files.extend([f"{stem}.srt", f"{stem}.smi"])
-                original_cues = segment_subtitles(segments,
-                    line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
+                original_cues = subtitle_sets["original"]
                 validate_cues(original_cues, metadata["duration"])
                 (output / "original.srt").write_text(segments_to_srt(original_cues), encoding="utf-8")
                 self.transition(job_id, JobStatus.ENCODING, message="인코딩 슬롯 대기 중")
@@ -198,7 +212,8 @@ class Worker:
         result_ttl = float(os.getenv("RESULT_TTL_HOURS", "24")) * 3600
         history_ttl = float(os.getenv("HISTORY_TTL_DAYS", "90")) * 86400
         upload_ttl = float(os.getenv("UPLOAD_TTL_HOURS", "6")) * 3600
-        if any(not math.isfinite(value) or value < 0 for value in (result_ttl, history_ttl, upload_ttl)):
+        review_ttl = float(os.getenv("REVIEW_TTL_HOURS", "24")) * 3600
+        if any(not math.isfinite(value) or value < 0 for value in (result_ttl, history_ttl, upload_ttl, review_ttl)):
             raise ValueError("Retention periods must be finite and nonnegative")
         history_ttl = max(history_ttl, result_ttl)
         collect_orphans(self.repository, grace_seconds=float(os.getenv("ORPHAN_GRACE_HOURS", "2")) * 3600)
@@ -226,6 +241,13 @@ class Worker:
                             changed = True
                         if changed:
                             self.repository.save(record)
+                    elif record.status == JobStatus.AWAITING_REVIEW:
+                        review_age = (now - datetime.fromisoformat(record.metadata.get("awaiting_review_at", record.updated_at))).total_seconds()
+                        if review_age > review_ttl:
+                            self.cleanup(record.job_id)
+                            self.repository.update_status(record.job_id, JobStatus.CANCELLED,
+                                message="자막 검토 보관 기간이 만료되었습니다.",
+                                metadata={"review_expired_at": now.isoformat()})
                     elif record.status == JobStatus.UPLOADING:
                         if age > upload_ttl:
                             self.cleanup(record.job_id)

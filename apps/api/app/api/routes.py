@@ -14,6 +14,7 @@ from app.schemas.jobs import (
     UploadCreateResponse,
     UploadStatusResponse,
     UploadVerifyRequest,
+    SubtitleUpdate,
     job_to_response,
 )
 from app.services.storage_guard import StorageGuard, StorageLimitError
@@ -23,6 +24,7 @@ from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
 from video_service.capacity import assert_capacity
+from video_service.review import read_draft, write_draft
 
 router = APIRouter(prefix="/api")
 repository = FilesystemJobRepository(settings.storage_root)
@@ -59,10 +61,10 @@ def create_upload(payload: UploadCreateRequest) -> UploadCreateResponse:
                 actual = (record.original_filename, record.expected_size, record.options.source_language,
                     record.options.target_language, record.options.quality_profile, record.options.video_codec,
                     record.options.subtitle_mode, record.options.resolution, record.options.additional_languages,
-                    record.options.audio_filter)
+                    record.options.audio_filter, record.options.review_subtitles)
                 expected = (payload.filename, payload.size, payload.source_language,
                     payload.target_language, payload.quality_profile, payload.video_codec, payload.subtitle_mode,
-                    payload.resolution, payload.additional_languages, payload.audio_filter)
+                    payload.resolution, payload.additional_languages, payload.audio_filter, payload.review_subtitles)
                 if actual != expected:
                     raise HTTPException(status_code=409, detail="생성 요청 식별자가 다른 업로드 설정에 사용되었습니다.")
             else:
@@ -78,6 +80,7 @@ def create_upload(payload: UploadCreateRequest) -> UploadCreateResponse:
                     resolution=payload.resolution,
                     additional_languages=payload.additional_languages,
                     audio_filter=payload.audio_filter,
+                    review_subtitles=payload.review_subtitles,
                     metadata={"upload_request_id": request_id} if request_id else None,
                 )
     except StorageLimitError as exc:
@@ -184,12 +187,40 @@ def get_job(job_id: str):
     return job_to_response(_read_job_or_404(job_id))
 
 
+@router.get("/jobs/{job_id}/subtitles")
+def get_subtitle_draft(job_id: str):
+    with job_lock(repository, job_id):
+        record = _read_job_or_404(job_id)
+        if record.status != JobStatus.AWAITING_REVIEW:
+            raise HTTPException(status_code=409, detail="자막 검토 대기 상태가 아닙니다.")
+        return read_draft(repository, record)
+
+
+@router.put("/jobs/{job_id}/subtitles")
+def update_subtitle_draft(job_id: str, payload: SubtitleUpdate):
+    with job_lock(repository, job_id, "execution"), job_lock(repository, job_id):
+        record = _read_job_or_404(job_id)
+        if record.status != JobStatus.AWAITING_REVIEW:
+            raise HTTPException(status_code=409, detail="자막 검토 대기 상태가 아닙니다.")
+        current = read_draft(repository, record)
+        if current["revision"] != payload.revision:
+            raise HTTPException(status_code=409, detail="다른 창에서 자막이 변경되었습니다. 최신 자막을 다시 불러오세요.")
+        tracks = {name: [cue.model_dump(exclude_none=True) for cue in cues] for name, cues in payload.tracks.items()}
+        try:
+            draft = write_draft(repository, record, tracks, current["duration"], current["revision"] + 1)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if payload.action == "render":
+            repository.update_status(job_id, JobStatus.QUEUED, metadata={"review_ready": True})
+        return {**draft, "status": "QUEUED" if payload.action == "render" else "AWAITING_REVIEW"}
+
+
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict[str, str]:
     with job_lock(repository, job_id):
         record = _read_job_or_404(job_id)
         if record.status not in TERMINAL_STATUSES:
-            if record.status in {JobStatus.UPLOADING, JobStatus.QUEUED}:
+            if record.status in {JobStatus.UPLOADING, JobStatus.QUEUED, JobStatus.AWAITING_REVIEW}:
                 record = repository.update_status(job_id, JobStatus.CANCELLED, message="사용자가 작업을 취소했습니다.")
             else:
                 record.metadata["cancel_requested"] = True
