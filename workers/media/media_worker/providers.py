@@ -14,6 +14,7 @@ import httpx
 from video_service.transcript import TranscriptSegment
 from video_service.config import load_environment
 from video_service.timeline import identity_timeline
+from .llm_trace import begin_call, finish_call, audio_window
 
 
 class GeminiProvider:
@@ -30,12 +31,14 @@ class GeminiProvider:
         async with httpx.AsyncClient(timeout=120) as client:
             for attempt in range(3):
                 check()
+                payload = {"contents": [{"role": "user", "parts": parts}],
+                    "generationConfig": ({"audioTranscriptionConfig": transcription_config} if transcription_config is not None
+                        else {"responseMimeType": "application/json", "responseSchema": schema})}
+                trace = begin_call(model, attempt + 1, payload, self.key)
                 task = asyncio.create_task(client.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                     headers={"x-goog-api-key": self.key},
-                    json={"contents": [{"role": "user", "parts": parts}],
-                        "generationConfig": ({"audioTranscriptionConfig": transcription_config} if transcription_config is not None
-                            else {"responseMimeType": "application/json", "responseSchema": schema})},
+                    json=payload,
                 ))
                 response = None
                 try:
@@ -43,13 +46,16 @@ class GeminiProvider:
                         await asyncio.wait({task}, timeout=0.25)
                         check()
                     response = await task
-                except httpx.TransportError:
+                    finish_call(trace, self.key, status=response.status_code, body=response.text)
+                except httpx.TransportError as error:
+                    finish_call(trace, self.key, transport_error=type(error).__name__)
                     if attempt == 2:
                         raise RuntimeError("Gemini connection failed after 3 attempts") from None
                 finally:
                     if not task.done():
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
+                        finish_call(trace, self.key, cancelled=True)
                 if response is None or (response.status_code in (429, 500, 502, 503, 504) and attempt < 2):
                     await wait_for_retry(retry_delay(response, attempt), check)
                     continue
@@ -88,9 +94,10 @@ class GeminiProvider:
             chunk.writeframes(audio.readframes(right - left))
         code = {"en": "en-US", "ko": "ko-KR", "ja": "ja-JP", "zh": "cmn-Hans-CN", "es": "es-419"}.get(language, language)
         try:
-            items = self.request([{"inlineData": {"mimeType": "audio/wav",
-                "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}], None, check, self.transcription_model,
-                {"wordTimestamp": True, "mode": "VERBATIM", "languageCodes": [] if language == "auto" else [code]})
+            with audio_window(left, right, rate, depth):
+                items = self.request([{"inlineData": {"mimeType": "audio/wav",
+                    "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}], None, check, self.transcription_model,
+                    {"wordTimestamp": True, "mode": "VERBATIM", "languageCodes": [] if language == "auto" else [code]})
             for item in items:
                 if not (math.isfinite(item["start"]) and math.isfinite(item["end"])
                         and 0 <= item["start"] < item["end"] <= (right - left) / rate + 0.1):

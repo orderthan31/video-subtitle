@@ -2,6 +2,9 @@ from pathlib import Path
 import sys
 import unittest
 from unittest.mock import AsyncMock, patch
+import json
+import shutil
+from uuid import uuid4
 
 import httpx
 
@@ -9,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.providers import GeminiProvider, retry_delay
 from media_worker.process import Cancelled
+from media_worker.llm_trace import capture_calls, audio_window
 
 
 class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
@@ -84,6 +88,31 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(Cancelled):
                 await self.provider._request([], None, lambda: None, "test-model", {"wordTimestamp": True})
         self.assertEqual(self.client.post.call_count, 1)
+
+    async def test_preserved_traces_capture_each_raw_response_before_validation(self):
+        root = ROOT / "data/test-runs" / uuid4().hex
+        root.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, root)
+        self.client.post.return_value = self.transcription_response("2s", "1s")
+        with capture_calls(root, root / "llm"), audio_window(100, 200, 100, 2), \
+                patch("media_worker.providers.asyncio.sleep", new_callable=AsyncMock):
+            with self.assertRaises(ValueError):
+                await self.provider._request([{"text": "prompt test-only"}], None,
+                    lambda: None, "test-model", {"wordTimestamp": True})
+        folders = sorted((root / "llm").iterdir())
+        self.assertEqual(len(folders), 3)
+        for index, folder in enumerate(folders):
+            request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
+            response = json.loads((folder / "response.json").read_text(encoding="utf-8"))
+            self.assertEqual(request["attempt"], index + 1)
+            self.assertEqual(request["window"]["split_depth"], 2)
+            self.assertEqual(request["payload"]["contents"][0]["parts"][0]["text"], "prompt [REDACTED]")
+            self.assertEqual(response["status"], 200)
+            self.assertEqual(response["body"], self.client.post.return_value.text)
+            self.assertNotIn("test-only", (folder / "request.json").read_text())
+        self.client.post.return_value = self.success
+        await self.request()
+        self.assertEqual(len(list((root / "llm").iterdir())), 3)
 
     async def test_incomplete_output_is_not_retried(self):
         self.client.post.return_value = httpx.Response(200, json={"candidates": [{"finishReason": "MAX_TOKENS"}]})

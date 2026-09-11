@@ -18,6 +18,7 @@ from video_service.transcript import filter_transcript_segments, TranscriptSegme
 from .media import probe, extract_audio, preprocess_audio, encoding_args, select_encoder
 from .process import run_process, Cancelled
 from .providers import GeminiProvider
+from .llm_trace import capture_calls
 from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
@@ -61,7 +62,8 @@ class Worker:
 
     def process(self, job_id):
         repo = self.repository
-        with job_lock(repo, job_id, "execution"):
+        with job_lock(repo, job_id, "execution"), capture_calls(repo.storage_root,
+                repo.job_dir(job_id) / "work" / "llm" if repo.preserve_artifacts else None):
             with job_lock(repo, job_id):
                 if self.stop.is_set():
                     return
