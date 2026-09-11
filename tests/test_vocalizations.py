@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "packages/shared"), str(ROOT / "workers/media")]
 from media_worker.media import preprocess_audio
 from media_worker.process import Cancelled
-from media_worker.vocalizations import detect_vocalizations, validated_events, candidates_without_speech, subtract_intervals
+from media_worker.vocalizations import detect_vocalizations, validated_events, candidates_without_speech, subtract_intervals, exclude_protected
 from video_service.timeline import map_segment_to_original
 
 
@@ -118,6 +118,28 @@ class VocalizationTests(unittest.TestCase):
             _, spans = preprocess_audio(self.audio, self.root, protected_audio=[event(2, 18, "speech")])
         self.assertTrue(any(s.original_start <= 2 and s.original_end >= 18 for s in spans))
         self.assertAlmostEqual(sum(s.original_duration for s in spans), 17)
+
+    def test_later_confirmation_veto_retracts_an_overlapping_accepted_candidate(self):
+        candidates = [event(1, 2), event(1.2, 2.2)]
+        decisions = [{"kind": "breath", "safe_to_remove": True, "speech_overlap": False},
+            {"kind": "speech", "safe_to_remove": False, "speech_overlap": True}]
+        for reverse in (False, True):
+            self.provider.request.side_effect = [list(reversed(candidates)) if reverse else candidates,
+                *(list(reversed(decisions)) if reverse else decisions)]
+            result = detect_vocalizations(self.provider, self.audio, "en", lambda: None)
+            self.assertEqual(result["removals"], [])
+            self.assertEqual(len(result["protected"]), 1)
+        self.assertEqual(exclude_protected([event(1, 2), event(3.2, 3.8)], [event(1.5, 2.5)], 4), [event(3.2, 3.8)])
+
+    def test_pcm_layer_preserves_protected_audio_even_with_conflicting_removal(self):
+        log = self.root / "silence.log"
+        log.write_text("", encoding="utf-8")
+        with patch("media_worker.media.run_process", return_value=log):
+            output, spans = preprocess_audio(self.audio, self.root,
+                vocalizations=[event(1, 2)], protected_audio=[event(1.5, 2.5, "speech")])
+        with wave.open(str(output), "rb") as audio:
+            self.assertEqual(audio.getnframes(), 64000)
+        self.assertEqual(map_segment_to_original(1, 2, spans), (1, 2))
 
 
 if __name__ == "__main__":

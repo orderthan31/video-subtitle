@@ -109,7 +109,8 @@ def preprocess_audio(source, work, check=lambda: None, audio_filter="conservativ
             from .vocalizations import protect_intervals
             intervals = protect_intervals(intervals, protected_audio, duration)
         if vocalizations:
-            from .vocalizations import subtract_intervals
+            from .vocalizations import exclude_protected, subtract_intervals
+            vocalizations = exclude_protected(vocalizations, protected_audio or [], duration)
             intervals = subtract_intervals(intervals, vocalizations, duration)
     output = work / "processed-audio.wav"
     spans = copy_audio_intervals(source, output, intervals, check)

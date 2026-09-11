@@ -117,14 +117,33 @@ def detect_vocalizations(provider, source, language, check, strength="conservati
         protected = [{"start": item["start"], "end": item["end"]} for item in events
             if item["kind"] in {"speech", "uncertain"} or not item["certain"]]
         protected.extend(confirmation_vetoes)
-        return {"removals": accepted, "protected": protected}
+        return {"removals": exclude_protected(accepted, protected, total/rate), "protected": protected}
+
+
+def validated_interval(item, duration):
+    start, end = item["start"], item["end"]
+    if (type(start) not in (float, int) or type(end) not in (float, int)
+            or not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end <= duration):
+        raise ValueError("Invalid vocalization removal bounds")
+    return start, end
+
+
+def exclude_protected(removals, protected, duration):
+    """A later speech veto cancels a whole overlapping proposal, regardless of ordering."""
+    ranges = protect_intervals([], protected, duration)
+    result = []
+    for item in removals:
+        start, end = validated_interval(item, duration)
+        if not any(start < right and end > left for left, right in ranges):
+            result.append(item)
+    return result
 
 
 def protect_intervals(kept, protected, duration):
     combined = list(kept)
     for item in protected:
         # Validate before extending speech/uncertainty boundaries.
-        subtract_intervals([], [item], duration)
+        validated_interval(item, duration)
         combined.append((max(0, item["start"] - 0.3), min(duration, item["end"] + 0.3)))
     merged = []
     for left, right in sorted(combined):
@@ -137,14 +156,7 @@ def protect_intervals(kept, protected, duration):
 
 def subtract_intervals(kept, removals, duration):
     """Apply all accepted removals in the original audio clock, never a shifted clock."""
-    cuts = []
-    for item in removals:
-        start, end = item["start"], item["end"]
-        if (type(start) not in (float, int) or type(end) not in (float, int)
-                or not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end <= duration):
-            raise ValueError("Invalid vocalization removal bounds")
-        cuts.append((start, end))
-    cuts.sort()
+    cuts = sorted(validated_interval(item, duration) for item in removals)
     result = []
     for left, right in kept:
         cursor = left
