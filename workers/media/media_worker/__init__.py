@@ -1,0 +1,1 @@
+"""Independent media processing worker."""

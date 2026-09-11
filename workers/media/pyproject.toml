@@ -1,0 +1,12 @@
+[project]
+name = "video-subtitle-worker"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["video-service-shared", "httpx>=0.28"]
+
+[project.scripts]
+video-media-worker = "media_worker.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["media_worker*"]
