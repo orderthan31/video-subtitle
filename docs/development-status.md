@@ -4,6 +4,11 @@
 
 ## 구현 및 검증
 
+- FFmpeg/FFprobe 9.0.1 프로젝트 도구 설치와 SHA256 검증 완료.
+- 7.17초 합성 영상: 실제 전사/번역, HEVC 출력, 한글 번인 프레임 확인, input/work 정리 성공. 최종 MP4 770,553바이트. 실행 보고서: `data/live-smoke/3208d54604204b4281f24baff110f8fd/report.json` (Git 제외).
+- GPU는 RTX 5070 Ti, 드라이버 591.86. 설치한 FFmpeg는 NVENC 13.1/드라이버 610 이상을 요구해 GPU 실행 실패. 명시적으로 허용한 libx265 fallback으로 소규모 통합 검증 완료. NVENC 경로는 미검증.
+- 회귀 테스트 21개 통과. FFmpeg 실패 로그의 마지막 3KB를 오류에 보존한다.
+
 - 단계별 로컬 Git 커밋 시작: API 기반, Worker, Web을 분리 기록.
 - 실제 Gemini 번역 한 문장과 합성 영어 음성 전사 성공. 전사는 `audioTranscriptionConfig.wordTimestamp`로 받은 단어 시간을 문장 단위로 묶는다. 실제 영상 품질/E2E 검증과는 구분한다.
 
@@ -39,4 +44,4 @@
 - [Gemini generateContent API](https://ai.google.dev/api/generate-content)
 - [전사 전용 설정과 응답](https://ai.google.dev/gemini-api/docs/generate-content/transcribe)
 
-자동 회귀 테스트와 별도로 소규모 실제 Gemini 호출을 확인했다. 실제 FFmpeg 실행과 대용량 E2E는 아직 검증하지 않았다.
+자동 회귀 테스트와 별도로 소규모 실제 Gemini/FFmpeg 통합 실행을 확인했다. 대용량·모바일 재생·GPU E2E는 아직 검증하지 않았다.

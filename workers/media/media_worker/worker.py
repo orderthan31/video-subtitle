@@ -11,7 +11,7 @@ from video_service.storage import remove_path_inside, write_json_atomic
 from video_service.subtitles import segments_to_srt
 from video_service.timeline import map_segment_to_original
 from video_service.transcript import filter_transcript_segments
-from .media import probe, extract_audio, preprocess_audio, encoding_args
+from .media import probe, extract_audio, preprocess_audio, encoding_args, select_encoder
 from .process import run_process, Cancelled
 from .providers import GeminiProvider
 from video_service.config import load_environment
@@ -60,6 +60,7 @@ class Worker:
             try:
                 work = repo.job_dir(job_id) / "work"
                 work.mkdir(exist_ok=True)
+                encoder = select_encoder(work, check)
                 source = repo.source_path(record).resolve()
                 metadata = probe(source, work, check)
                 videos = [stream for stream in metadata["streams"] if stream["codec_type"] == "video"]
@@ -89,7 +90,7 @@ class Worker:
                 (work / "translated.srt").write_text(srt, encoding="utf-8")
                 self.transition(job_id, JobStatus.ENCODING)
                 target = (output / "final.mp4").resolve()
-                software = os.getenv("VIDEO_ENCODER", "hevc_nvenc") == "libx265"
+                software = encoder == "libx265"
                 run_process(encoding_args(source, target, videos[0], record.options.quality_profile.value, software),
                     cwd=work, log_name="encode.log", check=check)
                 self.transition(job_id, JobStatus.VALIDATING)
@@ -102,7 +103,7 @@ class Worker:
                 self.transition(job_id, JobStatus.CLEANING)
                 size = target.stat().st_size
                 self.cleanup(job_id, keep_output=True)
-                self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size, "duration": final["duration"]})
+                self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size, "duration": final["duration"], "encoder": encoder})
             except (Exception, KeyboardInterrupt) as exc:
                 cancelled = isinstance(exc, (Cancelled, KeyboardInterrupt))
                 self.cleanup(job_id)

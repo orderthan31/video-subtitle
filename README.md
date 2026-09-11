@@ -57,6 +57,6 @@ API와 Worker는 루트 `.env`를 읽습니다. 기존 프로세스 환경변수
 - FFprobe
 - NVIDIA GPU/NVENC 지원 드라이버
 
-위 도구는 후속 미디어 처리 구현에 필요합니다. `ALLOW_SOFTWARE_ENCODER_FALLBACK`은 계획된 설정이며 현재 동작하지 않습니다.
+Windows에서는 `scripts/setup-ffmpeg.ps1`로 프로젝트 `.tools`에 FFmpeg를 준비할 수 있습니다. Worker는 PATH에 도구가 없으면 이 경로를 찾습니다. `ALLOW_SOFTWARE_ENCODER_FALLBACK=true`이면 GPU 사전 검사 실패 시 libx265로 전환합니다.
 
 현재 API는 인증이 없는 로컬 개발용입니다. 잠금 파일은 저장소의 `.locks`에 유지되며 프로세스가 종료되면 OS 잠금은 해제됩니다. 향후 Worker도 동일한 잠금 규약을 사용해야 합니다. 저장소 용량 검사는 생성 시점 검사로, 동시 작업의 예약 용량과 미디어 임시 파일까지 보장하지 않습니다.

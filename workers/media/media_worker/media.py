@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import wave
 
 from video_service.timeline import build_timeline_from_kept_intervals
@@ -12,7 +13,14 @@ from .process import run_process
 
 
 def executable(name):
-    return os.getenv(name.upper() + "_PATH", name)
+    configured = os.getenv(name.upper() + "_PATH", name)
+    if configured != name or shutil.which(name):
+        return configured
+    root = Path(__file__).resolve().parents[3]
+    matches = sorted((root / ".tools").glob(f"ffmpeg-*/bin/{name}.exe"))
+    if matches:
+        return str(matches[-1])
+    return name
 
 
 def probe(source, work, check=lambda: None):
@@ -107,3 +115,20 @@ def encoding_args(source, destination, video_stream, quality="balanced", softwar
     args += ["-preset", "medium", "-crf", str(cq)] if software else ["-preset", "p5", "-rc", "vbr", "-cq", str(cq), "-b:v", "0"]
     return args + ["-g", str(max(1, round(fps * 2))), "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", destination]
+
+
+def select_encoder(work, check=lambda: None):
+    requested = os.getenv("VIDEO_ENCODER", "hevc_nvenc")
+    if requested == "libx265":
+        return requested
+    if requested != "hevc_nvenc":
+        raise ValueError("Unsupported VIDEO_ENCODER")
+    try:
+        run_process([executable("ffmpeg"), "-nostdin", "-f", "lavfi", "-i", "color=size=128x128:rate=1",
+            "-frames:v", "1", "-c:v", "hevc_nvenc", "-f", "null", "-"],
+            cwd=work, log_name="encoder-check.log", check=check, timeout=30)
+        return "hevc_nvenc"
+    except RuntimeError:
+        if os.getenv("ALLOW_SOFTWARE_ENCODER_FALLBACK", "false").lower() != "true":
+            raise
+        return "libx265"

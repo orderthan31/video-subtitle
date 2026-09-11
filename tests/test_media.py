@@ -4,10 +4,11 @@ import sys
 import unittest
 from uuid import uuid4
 import wave
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
-from media_worker.media import kept_intervals, copy_audio_intervals, encoding_args
+from media_worker.media import kept_intervals, copy_audio_intervals, encoding_args, select_encoder
 from media_worker.process import run_process, Cancelled
 
 
@@ -47,6 +48,13 @@ class MediaTests(unittest.TestCase):
     def test_process_failure(self):
         with self.assertRaises(RuntimeError):
             run_process([sys.executable, "-c", "raise SystemExit(3)"], cwd=self.work, log_name="failed.log")
+
+    def test_encoder_fallback_requires_configuration(self):
+        with patch.dict("os.environ", {"VIDEO_ENCODER": "hevc_nvenc", "ALLOW_SOFTWARE_ENCODER_FALLBACK": "false"}), patch("media_worker.media.run_process", side_effect=RuntimeError("driver")):
+            with self.assertRaises(RuntimeError):
+                select_encoder(self.work)
+        with patch.dict("os.environ", {"VIDEO_ENCODER": "hevc_nvenc", "ALLOW_SOFTWARE_ENCODER_FALLBACK": "true"}), patch("media_worker.media.run_process", side_effect=RuntimeError("driver")):
+            self.assertEqual(select_encoder(self.work), "libx265")
 
     def test_process_cancel_terminates_child(self):
         def cancel():

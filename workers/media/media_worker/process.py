@@ -25,7 +25,11 @@ def run_process(args, *, cwd: Path, log_name: str, check=lambda: None, timeout=7
                 time.sleep(0.2)
             check()
             if process.returncode:
-                raise RuntimeError(f"{Path(str(args[0])).name} exited with {process.returncode}; see {log.name}")
+                output.flush()
+                with log.open("rb") as failed_log:
+                    failed_log.seek(max(0, log.stat().st_size - 3000))
+                    detail = failed_log.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"{Path(str(args[0])).name} exited with {process.returncode}: {detail}")
         finally:
             if process.poll() is None:
                 process.terminate()
