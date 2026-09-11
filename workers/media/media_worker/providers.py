@@ -65,7 +65,7 @@ class GeminiProvider:
                     except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as error:
                         reason = str(error) if isinstance(error, WordTimestampError) else "malformed word annotations"
                         if attempt == 2:
-                            raise ValueError(f"STT word timing validation failed after 3 attempts: {reason}") from None
+                            raise WordTimestampError(f"STT word timing validation failed after 3 attempts: {reason}") from None
                         logging.warning("Retrying STT window after invalid timing (%s), attempt %d/3", reason, attempt + 2)
                         await wait_for_retry(2**attempt, check)
                         continue
@@ -78,6 +78,44 @@ class GeminiProvider:
     def detect_vocalizations(self, source, language, check, strength="conservative"):
         from .vocalizations import detect_vocalizations
         return detect_vocalizations(self, source, language, check, strength)
+
+    def transcribe_window(self, audio, left, right, language, check, depth=0):
+        rate = audio.getframerate()
+        audio.setpos(left)
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as chunk:
+            chunk.setparams(audio.getparams())
+            chunk.writeframes(audio.readframes(right - left))
+        code = {"en": "en-US", "ko": "ko-KR", "ja": "ja-JP", "zh": "cmn-Hans-CN", "es": "es-419"}.get(language, language)
+        try:
+            items = self.request([{"inlineData": {"mimeType": "audio/wav",
+                "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}], None, check, self.transcription_model,
+                {"wordTimestamp": True, "mode": "VERBATIM", "languageCodes": [] if language == "auto" else [code]})
+            for item in items:
+                if not (math.isfinite(item["start"]) and math.isfinite(item["end"])
+                        and 0 <= item["start"] < item["end"] <= (right - left) / rate + 0.1):
+                    raise WordTimestampError("STT returned invalid timestamps for audio window")
+            return items
+        except WordTimestampError:
+            if depth >= 3 or right - left <= 8 * rate:
+                raise
+            check()
+            middle = (left + right) // 2
+            logging.warning("Splitting invalid STT window at %.3fs (duration %.3fs, depth %d)",
+                middle / rate, (right - left) / rate, depth + 1)
+            result = []
+            # Overlap supplies speech context; midpoint ownership avoids duplicate words.
+            for start, end, owner_start, owner_end in (
+                (left, min(right, middle + rate), left, middle),
+                (max(left, middle - rate), right, middle, right),
+            ):
+                check()
+                for item in self.transcribe_window(audio, start, end, language, check, depth + 1):
+                    word_start = start + item["start"] * rate
+                    word_end = min(start + item["end"] * rate, right)
+                    if owner_start <= (word_start + word_end) / 2 < owner_end and word_start < word_end:
+                        result.append({**item, "start": (word_start - left) / rate, "end": (word_end - left) / rate})
+            return sorted(result, key=lambda item: item["start"])
 
     def transcribe(self, source, language, check, *, spans=None):
         result = []
@@ -94,15 +132,7 @@ class GeminiProvider:
                     result.extend(TranscriptSegment.from_dict(item) for item in group_transcription_words(region_words))
                     region_words = []
                     current_region = span
-                audio.setpos(left)
-                buffer = io.BytesIO()
-                with wave.open(buffer, "wb") as chunk:
-                    chunk.setparams(audio.getparams())
-                    chunk.writeframes(audio.readframes(right - left))
-                code = {"en": "en-US", "ko": "ko-KR", "ja": "ja-JP", "zh": "cmn-Hans-CN", "es": "es-419"}.get(language, language)
-                items = self.request([{"inlineData": {"mimeType": "audio/wav",
-                    "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}], None, check, self.transcription_model,
-                    {"wordTimestamp": True, "mode": "VERBATIM", "languageCodes": [] if language == "auto" else [code]})
+                items = self.transcribe_window(audio, left, right, language, check)
                 for item in items:
                     segment = TranscriptSegment.from_dict(item)
                     if not (math.isfinite(segment.start) and math.isfinite(segment.end)

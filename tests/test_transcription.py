@@ -12,11 +12,54 @@ from unittest.mock import Mock, AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
-from media_worker.providers import GeminiProvider, parse_word_transcriptions, transcription_windows
+from media_worker.providers import GeminiProvider, WordTimestampError, parse_word_transcriptions, transcription_windows
 from video_service.timeline import build_timeline_from_kept_intervals, map_segment_to_original
 
 
 class TranscriptionTests(unittest.TestCase):
+    def window_fixture(self, seconds=20):
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as audio:
+            audio.setparams((1, 2, 100, 0, "NONE", "not compressed"))
+            audio.writeframes(bytes(seconds * 200))
+        buffer.seek(0)
+        audio = wave.open(buffer, "rb")
+        self.addCleanup(audio.close)
+        provider = GeminiProvider.__new__(GeminiProvider)
+        provider.transcription_model = "test-model"
+        return provider, audio
+
+    def test_invalid_window_is_split_with_context_and_exact_word_ownership(self):
+        provider, audio = self.window_fixture()
+        provider.request = Mock(side_effect=[WordTimestampError("reversed interval"),
+            [{"start": 9.5, "end": 9.8, "text": "Keep"},
+             {"start": 10.1, "end": 10.4, "text": "both."}],
+            [{"start": 0.5, "end": 0.8, "text": "Keep"},
+             {"start": 1.1, "end": 1.4, "text": "both."}]])
+        result = provider.transcribe_window(audio, 0, 2000, "en", lambda: None)
+        self.assertEqual([word["text"] for word in result], ["Keep", "both."])
+        self.assertAlmostEqual(result[0]["start"], 9.5)
+        self.assertAlmostEqual(result[1]["end"], 10.4)
+        durations = []
+        for call in provider.request.call_args_list:
+            with wave.open(io.BytesIO(base64.b64decode(call.args[0][0]["inlineData"]["data"]))) as chunk:
+                durations.append(chunk.getnframes() / chunk.getframerate())
+        self.assertEqual(durations, [20, 11, 11])
+
+    def test_persistent_bad_windows_have_bounded_subdivision(self):
+        provider, audio = self.window_fixture(61)
+        provider.request = Mock(side_effect=WordTimestampError("reversed interval"))
+        with self.assertRaises(WordTimestampError):
+            provider.transcribe_window(audio, 0, 6100, "en", lambda: None)
+        self.assertEqual(provider.request.call_count, 4)
+
+    def test_auth_failure_does_not_trigger_subdivision(self):
+        provider, audio = self.window_fixture()
+        provider.request = Mock(side_effect=RuntimeError("HTTP 401"))
+        with self.assertRaisesRegex(RuntimeError, "HTTP 401"):
+            provider.transcribe_window(audio, 0, 2000, "en", lambda: None)
+        self.assertEqual(provider.request.call_count, 1)
+
     def test_sentence_and_speaker_boundaries(self):
         parts = [{"audioTranscription": {"speakerLabel": "A", "words": [
             {"word": "Hello", "startOffset": "0.1s", "endOffset": "0.3s"},
