@@ -25,8 +25,11 @@ def executable(name):
 
 def probe(source, work, check=lambda: None):
     log = run_process([executable("ffprobe"), "-v", "error", "-show_format", "-show_streams",
-        "-of", "json", source], cwd=work, log_name="probe.json", check=check, timeout=120)
-    data = json.loads(log.read_text(encoding="utf-8"))
+        "-of", "json", source], cwd=work, log_name="probe.json", stderr_log_name="probe.stderr.log", check=check, timeout=120)
+    try:
+        data = json.loads(log.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError('FFprobe returned invalid video metadata; see probe.json and probe.stderr.log') from exc
     duration = float(data["format"]["duration"])
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError("Invalid media duration")

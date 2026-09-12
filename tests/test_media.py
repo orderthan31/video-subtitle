@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
-from media_worker.media import kept_intervals, copy_audio_intervals, encoding_args, select_encoder
+from media_worker.media import kept_intervals, copy_audio_intervals, encoding_args, select_encoder, probe
 from media_worker.process import run_process, Cancelled
 
 
@@ -17,6 +17,16 @@ class MediaTests(unittest.TestCase):
         self.work = ROOT / "data/test-runs" / uuid4().hex
         self.work.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.work)
+
+    def test_probe_parses_stdout_and_preserves_chapter_warning(self):
+        def fake_ffprobe(args, **kwargs):
+            return run_process([sys.executable, '-c',
+                'import sys; print("[mov] Referenced QT chapter track not found", file=sys.stderr); '
+                'print(\'{"format":{"duration":"12.5"},"streams":[{"codec_type":"video"}]}\')'], **kwargs)
+        with patch('media_worker.media.run_process', side_effect=fake_ffprobe):
+            self.assertEqual(probe(self.work / 'source.mp4', self.work)['duration'], 12.5)
+        self.assertIn('QT chapter', (self.work / 'probe.stderr.log').read_text())
+        self.assertTrue((self.work / 'probe.json').read_text().startswith('{'))
 
     def test_short_silence_preserved(self):
         self.assertEqual(kept_intervals(["silence_start: 2", "silence_end: 5"], 20), [(0, 20)])

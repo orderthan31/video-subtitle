@@ -28,6 +28,33 @@ class ProcessLogTests(unittest.TestCase):
         path = self.run_child("import json; print(json.dumps({'streams': [{'codec': 'hevc'}]}))", max_log_bytes=4096)
         self.assertEqual(json.loads(path.read_text()), {"streams": [{"codec": "hevc"}]})
 
+    def test_separate_diagnostics_do_not_corrupt_json(self):
+        path = self.run_child("import sys; print('Referenced QT chapter track not found', file=sys.stderr); print('{\"streams\": []}')",
+                              stderr_log_name='stderr.log')
+        self.assertEqual(json.loads(path.read_text()), {'streams': []})
+        self.assertIn('QT chapter', (self.root / 'stderr.log').read_text())
+
+    def test_separate_stderr_overflow_is_bounded(self):
+        with self.assertRaises(ProcessLogLimitError):
+            self.run_child("import sys; sys.stderr.buffer.write(b'x' * 262144); print('{}')",
+                           stderr_log_name='stderr.log', max_log_bytes=4096)
+        self.assertEqual((self.root / 'stderr.log').stat().st_size, 4096)
+
+    def test_separate_process_failure_reports_diagnostics(self):
+        with self.assertRaisesRegex(RuntimeError, 'PROBE_FAILED'):
+            self.run_child("import sys; print('{}'); print('PROBE_FAILED', file=sys.stderr); sys.exit(1)",
+                           stderr_log_name='stderr.log')
+
+    def test_separate_streams_cancel_and_timeout(self):
+        for options, error in [({'check': lambda: (_ for _ in ()).throw(Cancelled())}, Cancelled),
+                               ({'timeout': .1}, TimeoutError)]:
+            with self.assertRaises(error):
+                self.run_child('import time; time.sleep(30)', stderr_log_name='stderr.log', **options)
+
+    def test_identical_log_paths_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self.run_child('pass', stderr_log_name='child.log')
+
     def test_overflow_cannot_return_a_truncated_success_even_after_process_exit(self):
         with self.assertRaises(ProcessLogLimitError):
             self.run_child("import sys; sys.stdout.buffer.write(b'x' * 262144)", max_log_bytes=4096)
