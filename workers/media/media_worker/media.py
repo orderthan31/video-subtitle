@@ -138,7 +138,7 @@ def encoding_args(source, destination, video_stream, quality="balanced", softwar
         raise ValueError("Unsupported resolution")
     if video_codec not in {"hevc", "h264"}:
         raise ValueError("Unsupported video codec")
-    if subtitle_mode not in {"burn", "soft"}:
+    if subtitle_mode not in {"burn", "soft", "none"}:
         raise ValueError("Unsupported subtitle mode")
     fps = float(Fraction(video_stream.get("avg_frame_rate", "0/1")))
     if not math.isfinite(fps) or fps <= 0:
@@ -149,7 +149,7 @@ def encoding_args(source, destination, video_stream, quality="balanced", softwar
         args += ["-i", "translated.srt"]
         for language in additional_languages:
             args += ["-i", f"translated.{language}.srt"]
-    args += ["-map", "0:v:0", "-map", "0:a:0"]
+    args += ["-map", "0:v:0", "-map", "0:a:0?"]
     filters = []
     if resolution != "original":
         width, height = output_dimensions(video_stream, resolution)
@@ -161,7 +161,7 @@ def encoding_args(source, destination, video_stream, quality="balanced", softwar
                 target.split("-")[0], "und")
             args += ["-map", f"{index + 1}:s:0", f"-disposition:s:{index}", "default" if index == 0 else "0",
                 f"-metadata:s:s:{index}", f"language={language}", f"-metadata:s:s:{index}", f"handler_name={target}"]
-    else:
+    elif subtitle_mode == "burn":
         filters.append("subtitles=translated.srt")
     if filters:
         args += ["-vf", ",".join(filters)]

@@ -42,7 +42,8 @@ class ResolutionTests(unittest.TestCase):
         self.assertNotIn("-vf", args)
 
     def test_validator_requires_selected_resolution(self):
-        source = {"duration": 10, "streams": [{"codec_type": "video", "width": 1920, "height": 1080}]}
+        source = {"duration": 10, "streams": [{"codec_type": "video", "width": 1920, "height": 1080},
+                                            {"codec_type": "audio"}]}
         output = {"duration": 10, "streams": [
             {"codec_type": "video", "width": 1280, "height": 720, "codec_name": "h264",
              "codec_tag_string": "avc1", "pix_fmt": "yuv420p"},

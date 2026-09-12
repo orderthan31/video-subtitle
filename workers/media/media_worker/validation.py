@@ -6,7 +6,7 @@ def validate_decodable(target, work, check):
     from .process import run_process
 
     run_process([executable("ffmpeg"), "-nostdin", "-v", "error", "-xerror", "-i", target,
-        "-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"],
+        "-map", "0:v:0", "-map", "0:a:0?", "-f", "null", "-"],
         cwd=work, log_name="validate-decode.log", check=check)
 
 
@@ -67,7 +67,7 @@ def output_dimensions(stream, resolution="original"):
 def validate_output(source, output, size, video_codec="hevc", subtitle_mode="burn", resolution="original", subtitle_count=1):
     if video_codec not in {"hevc", "h264"}:
         raise ValueError("Unsupported video codec")
-    if subtitle_mode not in {"burn", "soft"}:
+    if subtitle_mode not in {"burn", "soft", "none"}:
         raise ValueError("Unsupported subtitle mode")
     subtitles = [s for s in output["streams"] if s["codec_type"] == "subtitle"]
     if subtitle_mode == "soft":
@@ -79,13 +79,14 @@ def validate_output(source, output, size, video_codec="hevc", subtitle_mode="bur
         raise ValueError("Burned output must not contain subtitle tracks")
     videos = [s for s in output["streams"] if s["codec_type"] == "video"]
     audios = [s for s in output["streams"] if s["codec_type"] == "audio"]
-    if size <= 0 or len(videos) != 1 or len(audios) != 1:
+    expected_audio = int(any(s['codec_type'] == 'audio' for s in source['streams']))
+    if size <= 0 or len(videos) != 1 or len(audios) != expected_audio:
         raise ValueError("Invalid output streams")
-    video, audio = videos[0], audios[0]
+    video = videos[0]
     tag = "hvc1" if video_codec == "hevc" else "avc1"
     if video.get("codec_name") != video_codec or video.get("codec_tag_string") != tag:
         raise ValueError(f"Output must be {video_codec} with {tag} tag")
-    if video.get("pix_fmt") != "yuv420p" or audio.get("codec_name") != "aac":
+    if video.get("pix_fmt") != "yuv420p" or any(audio.get("codec_name") != "aac" for audio in audios):
         raise ValueError("Output must use yuv420p video and AAC audio")
     original_video = next(s for s in source["streams"] if s["codec_type"] == "video")
     expected = output_dimensions(original_video, resolution)

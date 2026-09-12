@@ -91,7 +91,7 @@ class JobOptions:
             raise ValueError("Unsupported audio filter")
         if self.video_codec not in {"hevc", "h264"}:
             raise ValueError("Unsupported video codec")
-        if self.subtitle_mode not in {"burn", "soft"}:
+        if self.subtitle_mode not in {"burn", "soft", "none"}:
             raise ValueError("Unsupported subtitle mode")
         if self.resolution not in {"original", "1080p", "720p"}:
             raise ValueError("Unsupported resolution")

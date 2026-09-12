@@ -12,7 +12,8 @@ from video_service.transcript import TranscriptSegment
 
 class OutputValidationTests(unittest.TestCase):
     def setUp(self):
-        self.source = {"duration": 10, "streams": [{"codec_type": "video", "width": 640, "height": 360}]}
+        self.source = {"duration": 10, "streams": [{"codec_type": "video", "width": 640, "height": 360},
+                                                   {"codec_type": "audio"}]}
         self.output = {"duration": 10, "streams": [
             {"codec_type": "video", "width": 640, "height": 360,
              "codec_name": "hevc", "codec_tag_string": "hvc1", "pix_fmt": "yuv420p"},
@@ -20,6 +21,14 @@ class OutputValidationTests(unittest.TestCase):
 
     def test_expected_output_passes(self):
         validate_output(self.source, self.output, 100)
+
+    def test_video_only_source_and_subtitle_free_output(self):
+        self.source['streams'] = self.source['streams'][:1]
+        self.output['streams'] = self.output['streams'][:1]
+        validate_output(self.source, self.output, 100, subtitle_mode='none')
+        self.source['streams'].append({'codec_type': 'audio'})
+        with self.assertRaises(ValueError):
+            validate_output(self.source, self.output, 100, subtitle_mode='none')
 
     def test_soft_output_requires_single_default_mov_text_track(self):
         with self.assertRaises(ValueError):

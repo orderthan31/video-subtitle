@@ -65,6 +65,11 @@ class FilesystemJobRepository:
         return resolve_under(self.storage_root, job_id)
 
     def source_path(self, record: JobRecord) -> Path:
+        if record.metadata.get('source_asset_id'):
+            from .assets import VideoAssetRepository
+            assets = VideoAssetRepository(self)
+            return assets.source_path(assets.read(record.metadata['source_asset_id'],
+                                                  owner_id=record.metadata.get('owner_id')))
         return resolve_under(self.storage_root, record.job_id, "input", record.source_filename)
 
     def job_file(self, job_id: str) -> Path:

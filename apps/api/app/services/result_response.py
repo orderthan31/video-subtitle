@@ -10,7 +10,7 @@ from video_service.storage import resolve_under
 
 class ResultResponse(FileResponse):
     def __init__(self, repository, job_id, filename, *, inline=False):
-        if filename not in {"final.mp4", "translated.srt", "original.srt", "translated.smi"} and not re.fullmatch(
+        if filename not in {"final.mp4", "audio.wav", "translated.srt", "original.srt", "translated.smi"} and not re.fullmatch(
                 r"translated\.[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*\.(?:srt|smi)", filename):
             raise HTTPException(status_code=404, detail="결과 파일을 찾을 수 없습니다.")
         self.repository = repository
@@ -32,7 +32,7 @@ class ResultResponse(FileResponse):
                 raise HTTPException(status_code=409, detail="아직 완료되지 않은 Job입니다.")
             if record.metadata.get("results_expired_at"):
                 raise HTTPException(status_code=410, detail="결과 파일의 보관 기간이 만료되었습니다.")
-            if self.filename != 'final.mp4' and record.metadata.get('subtitle_revision_dir'):
+            if self.filename.endswith(('.srt', '.smi')) and record.metadata.get('subtitle_revision_dir'):
                 self.path = resolve_under(self.repository.storage_root, self.job_id, 'output',
                     record.metadata['subtitle_revision_dir'], self.filename)
             if self.filename.startswith("translated.") and self.filename.count(".") == 2:

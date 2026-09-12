@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import logging
 import math
 import os
+import shutil
 from pathlib import Path
 import time
 from threading import Event
@@ -10,7 +11,9 @@ from video_service.locking import job_lock, JobBusyError, encoding_slot, wait_fo
 from video_service.models import JobStatus, TERMINAL_STATUSES, utc_now_iso
 from video_service.review import read_draft, write_draft
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
-from video_service.storage import remove_path_inside, write_json_atomic
+from video_service.storage import remove_path_inside, write_json_atomic, read_json
+from video_service.workflows import workflow_plan
+from video_service.artifacts import cue_digest, validate_cues as validate_input_cues
 from video_service.subtitles import segments_to_srt, segment_subtitles
 from video_service.sami import segments_to_sami
 from video_service.timeline import TimelineSpan
@@ -109,8 +112,21 @@ class Worker:
             try:
                 work = repo.job_dir(job_id) / "work"
                 work.mkdir(exist_ok=True)
-                with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
-                    encoder = select_encoder(work, check, video_codec=record.options.video_codec)
+                workflow = record.metadata.get('workflow', {})
+                plan = workflow_plan(workflow.get('template', 'full'),
+                    subtitle_input=bool(record.metadata.get('subtitle_input')),
+                    subtitle_mode=record.options.subtitle_mode)
+                stages = plan['stages']
+                encoder = None
+                if not workflow:
+                    with encoding_slot(repo, int(os.getenv('MAX_ENCODING_JOBS', '1')), check):
+                        encoder = select_encoder(work, check, video_codec=record.options.video_codec)
+                selected = None
+                if record.metadata.get('subtitle_input'):
+                    snapshot = read_json(repo.job_dir(job_id) / 'input/subtitle.json')
+                    if cue_digest(snapshot['cues']) != record.metadata['subtitle_input']['sha256']:
+                        raise ValueError('Subtitle snapshot integrity check failed')
+                    selected = [TranscriptSegment.from_dict(c) for c in snapshot['cues']]
                 source = repo.source_path(record).resolve()
                 checkpoints = Checkpoints(work, {"version": 1, "source_size": source.stat().st_size,
                     "source_mtime": source.stat().st_mtime_ns, "options": {key: value for key, value in record.options.to_dict().items()
@@ -125,72 +141,93 @@ class Worker:
                         int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size))
                 metadata = probe(source, work, check)
                 videos = [stream for stream in metadata["streams"] if stream["codec_type"] == "video"]
-                if not videos or not any(s["codec_type"] == "audio" for s in metadata["streams"]):
+                if not videos or ('extract_audio' in stages and not any(s["codec_type"] == "audio" for s in metadata["streams"])):
                     raise ValueError("Video and audio streams are required")
+                if selected is not None:
+                    validate_input_cues([s.to_dict() for s in selected], metadata['duration'])
                 write_json_atomic(work / "metadata.json", metadata)
                 reserve_workspace(repo, job_id, metadata["duration"],
                     int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
                     int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), check)
                 languages = [record.options.target_language, *record.options.additional_languages]
+                if 'translate' not in stages and not ('encode' in stages and selected is not None):
+                    languages = []
                 if record.metadata.get("review_ready"):
                     draft = read_draft(repo, record)
                     subtitle_sets = {name: [TranscriptSegment.from_dict(cue) for cue in cues]
                         for name, cues in draft["tracks"].items()}
+                elif plan['template'] == 'encode':
+                    subtitle_sets = {'original': selected, 'translated': selected} if selected is not None else {}
+                    if selected is not None:
+                        for name in ['transcript', 'translated']:
+                            write_json_atomic(work / (name + '.json'), [s.to_dict() for s in selected])
                 else:
-                    self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
-                    audio = work / checkpoints.run("extract", lambda: extract_audio(source, work, check).name,
-                        files=("audio.wav",))
-                    self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)
-                    vocalizations = []
-                    protected_audio = []
-                    filter_enabled = os.getenv("VOCALIZATION_FILTER_ENABLED", "false").lower()
-                    if filter_enabled not in {"true", "false"}:
-                        raise ValueError("VOCALIZATION_FILTER_ENABLED must be true or false")
-                    if filter_enabled == "true" and record.options.audio_filter != "off":
-                        analysis = checkpoints.run("vocalizations", lambda: self.provider.detect_vocalizations(
-                            audio, record.options.source_language, check, strength=record.options.audio_filter))
-                        vocalizations, protected_audio = analysis["removals"], analysis["protected"]
-                        write_json_atomic(work / "vocalization-analysis.json", analysis)
-                    def prepare_audio():
-                        processed, timeline = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter,
-                            vad_mode=record.options.vad_mode,
-                            vocalizations=vocalizations, protected_audio=protected_audio)
-                        return {"audio": processed.name, "spans": [span.to_dict() for span in timeline]}
-                    prepared = checkpoints.run("preprocess", prepare_audio,
-                        files=("processed-audio.wav", "timeline-map.json"))
-                    audio = work / prepared["audio"]
-                    spans = [TimelineSpan.from_dict(span) for span in prepared["spans"]]
-                    self.transition(job_id, JobStatus.PREPROCESSING_AUDIO, metadata={
-                        "vocalization_filter_enabled": filter_enabled == "true" and record.options.audio_filter != "off",
-                        "vocalization_removal_count": len(vocalizations)})
-                    self.transition(job_id, JobStatus.TRANSCRIBING)
-                    def transcription_progress(value):
-                        with wait_for_job_lock(repo, job_id, check=check):
-                            current = repo.read(job_id)
-                            current.metadata["transcription_progress"] = value
-                            current.metadata["stage_progress"] = value["completed"] / value["total"] if value["total"] else 1
-                            current.status_message = "진행 중 요청 회수 중" if value["draining"] else "음성 전사 중"
-                            repo.save(current)
-                    try:
-                        segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe-packed-60-v2", lambda: [
-                            s.to_dict() for s in self.provider.transcribe(audio, record.options.source_language, check,
-                                spans=spans, work=work, progress=transcription_progress)])]
-                    except PartialTranscriptionError as exc:
-                        partial = restore_segments(exc.segments, spans, work / "partial-cross-boundary.json")
-                        prefix = restore_segments(exc.prefix, spans, work / "partial-prefix-cross-boundary.json")
-                        write_json_atomic(work / "partial-transcript.json", {"incomplete": True,
-                            "failed_segments": [index + 1 for index in exc.failed],
-                            "segments": [s.to_dict() for s in filter_transcript_segments(partial, record.options.audio_filter)]})
-                        cues = segment_subtitles(filter_transcript_segments(prefix, record.options.audio_filter),
-                            line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
-                        (work / "partial-original.srt").write_text(segments_to_srt(cues), encoding="utf-8")
-                        raise
-                    segments = restore_segments(segments, spans, work / "cross-boundary.json")
-                    self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
-                    segments = filter_transcript_segments(segments, record.options.audio_filter)
-                    write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
-                    self.transition(job_id, JobStatus.TRANSLATING)
-                    subtitle_sets = {"original": segment_subtitles(segments,
+                    if 'transcribe' in stages or 'extract_audio' in stages:
+                        self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
+                        audio = work / checkpoints.run("extract", lambda: extract_audio(source, work, check).name,
+                            files=("audio.wav",))
+                        if plan['template'] == 'extract_audio':
+                            output = repo.job_dir(job_id) / 'output'
+                            shutil.copyfile(audio, output / 'audio.wav')
+                            self.transition(job_id, JobStatus.COMPLETED, metadata={
+                                'duration': metadata['duration'], 'result_files': ['audio.wav'],
+                                'output_bytes': (output / 'audio.wav').stat().st_size})
+                            return
+                        self.transition(job_id, JobStatus.PREPROCESSING_AUDIO)
+                        vocalizations = []
+                        protected_audio = []
+                        filter_enabled = os.getenv("VOCALIZATION_FILTER_ENABLED", "false").lower()
+                        if filter_enabled not in {"true", "false"}:
+                            raise ValueError("VOCALIZATION_FILTER_ENABLED must be true or false")
+                        if filter_enabled == "true" and record.options.audio_filter != "off":
+                            analysis = checkpoints.run("vocalizations", lambda: self.provider.detect_vocalizations(
+                                audio, record.options.source_language, check, strength=record.options.audio_filter))
+                            vocalizations, protected_audio = analysis["removals"], analysis["protected"]
+                            write_json_atomic(work / "vocalization-analysis.json", analysis)
+                        def prepare_audio():
+                            processed, timeline = preprocess_audio(audio, work, check, audio_filter=record.options.audio_filter,
+                                vad_mode=record.options.vad_mode,
+                                vocalizations=vocalizations, protected_audio=protected_audio)
+                            return {"audio": processed.name, "spans": [span.to_dict() for span in timeline]}
+                        prepared = checkpoints.run("preprocess", prepare_audio,
+                            files=("processed-audio.wav", "timeline-map.json"))
+                        audio = work / prepared["audio"]
+                        spans = [TimelineSpan.from_dict(span) for span in prepared["spans"]]
+                        self.transition(job_id, JobStatus.PREPROCESSING_AUDIO, metadata={
+                            "vocalization_filter_enabled": filter_enabled == "true" and record.options.audio_filter != "off",
+                            "vocalization_removal_count": len(vocalizations)})
+                        self.transition(job_id, JobStatus.TRANSCRIBING)
+                        def transcription_progress(value):
+                            with wait_for_job_lock(repo, job_id, check=check):
+                                current = repo.read(job_id)
+                                current.metadata["transcription_progress"] = value
+                                current.metadata["stage_progress"] = value["completed"] / value["total"] if value["total"] else 1
+                                current.status_message = "진행 중 요청 회수 중" if value["draining"] else "음성 전사 중"
+                                repo.save(current)
+                        try:
+                            segments = [TranscriptSegment.from_dict(item) for item in checkpoints.run("transcribe-packed-60-v2", lambda: [
+                                s.to_dict() for s in self.provider.transcribe(audio, record.options.source_language, check,
+                                    spans=spans, work=work, progress=transcription_progress)])]
+                        except PartialTranscriptionError as exc:
+                            partial = restore_segments(exc.segments, spans, work / "partial-cross-boundary.json")
+                            prefix = restore_segments(exc.prefix, spans, work / "partial-prefix-cross-boundary.json")
+                            write_json_atomic(work / "partial-transcript.json", {"incomplete": True,
+                                "failed_segments": [index + 1 for index in exc.failed],
+                                "segments": [s.to_dict() for s in filter_transcript_segments(partial, record.options.audio_filter)]})
+                            cues = segment_subtitles(filter_transcript_segments(prefix, record.options.audio_filter),
+                                line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)
+                            (work / "partial-original.srt").write_text(segments_to_srt(cues), encoding="utf-8")
+                            raise
+                        segments = restore_segments(segments, spans, work / "cross-boundary.json")
+                        self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
+                        segments = filter_transcript_segments(segments, record.options.audio_filter)
+                        write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
+                    else:
+                        segments = selected
+                        write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
+                    if languages:
+                        self.transition(job_id, JobStatus.TRANSLATING)
+                    subtitle_sets = {"original": selected if selected is not None else segment_subtitles(segments,
                         line_width=24 if record.options.source_language in {"auto", "ko", "ja", "zh"} else 42)}
                     for index, language in enumerate(languages):
                         check()
@@ -217,7 +254,7 @@ class Worker:
                         write_json_atomic(work / f"{stem}.json", [s.to_dict() for s in translated])
                         subtitle_sets[stem] = segment_subtitles(translated,
                             line_width=24 if language.split("-")[0] in {"ko", "ja", "zh"} else 42)
-                    if record.options.review_subtitles:
+                    if record.options.review_subtitles and 'encode' in stages:
                         with wait_for_job_lock(repo, "0" * 32, check=check):
                             write_draft(repo, record, {name: [cue.to_dict() for cue in cues]
                                 for name, cues in subtitle_sets.items()}, metadata["duration"], 1,
@@ -230,25 +267,39 @@ class Worker:
                 self.transition(job_id, JobStatus.GENERATING_SUBTITLE)
                 output = repo.job_dir(job_id) / "output"
                 output.mkdir(exist_ok=True)
-                result_files = ["final.mp4", "translated.srt", "original.srt", "translated.smi"]
+                result_files = []
                 for index, language in enumerate(languages):
                     check()
                     stem = "translated" if index == 0 else f"translated.{language}"
                     cues = subtitle_sets[stem]
-                    validate_cues(cues, metadata["duration"])
+                    if plan['template'] == 'encode':
+                        validate_input_cues([s.to_dict() for s in cues], metadata['duration'])
+                    else:
+                        validate_cues(cues, metadata["duration"])
                     srt = segments_to_srt(cues)
                     (output / f"{stem}.srt").write_text(srt, encoding="utf-8")
                     (output / f"{stem}.smi").write_text(segments_to_sami(cues, language), encoding="utf-8")
                     (work / f"{stem}.srt").write_text(srt, encoding="utf-8")
-                    if index:
-                        result_files.extend([f"{stem}.srt", f"{stem}.smi"])
-                original_cues = subtitle_sets["original"]
-                validate_cues(original_cues, metadata["duration"])
-                (output / "original.srt").write_text(segments_to_srt(original_cues), encoding="utf-8")
+                    result_files.extend([f"{stem}.srt", f"{stem}.smi"])
+                if 'original' in subtitle_sets:
+                    original_cues = subtitle_sets["original"]
+                    if selected is not None:
+                        validate_input_cues([s.to_dict() for s in original_cues], metadata['duration'])
+                    else:
+                        validate_cues(original_cues, metadata["duration"])
+                    (output / "original.srt").write_text(segments_to_srt(original_cues), encoding="utf-8")
+                    result_files.append('original.srt')
+                if 'encode' not in stages:
+                    self.transition(job_id, JobStatus.COMPLETED, metadata={
+                        'duration': metadata['duration'], 'result_files': result_files,
+                        'output_bytes': sum((output / name).stat().st_size for name in result_files)})
+                    return
                 self.transition(job_id, JobStatus.ENCODING, message="인코딩 슬롯 대기 중")
                 target = (output / "final.mp4").resolve()
-                software = encoder in {"libx265", "libx264"}
                 with encoding_slot(repo, int(os.getenv("MAX_ENCODING_JOBS", "1")), check):
+                    if encoder is None:
+                        encoder = select_encoder(work, check, video_codec=record.options.video_codec)
+                    software = encoder in {"libx265", "libx264"}
                     self.transition(job_id, JobStatus.ENCODING, message="영상 인코딩 중")
                     progress_path = work / "encode.log"
                     progress_duration = metadata["duration"]
@@ -264,6 +315,7 @@ class Worker:
                     subtitle_count=len(languages))
                 validate_decodable(target, work, check)
                 size = target.stat().st_size
+                result_files.insert(0, 'final.mp4')
                 self.transition(job_id, JobStatus.COMPLETED, metadata={"output_bytes": size,
                     "duration": final["duration"], "encoder": encoder,
                     "result_files": result_files})

@@ -11,6 +11,8 @@
 - [x] Add SRT attachment/version import APIs, immutable artifact storage and snapshot primitives.
 - [x] Define and test exact workflow stages and input compatibility.
 - [ ] Implement independent workflow templates and checkpoint-safe execution.
+- [x] Connect all six templates to job creation, fixed subtitle inputs and stage-selective worker execution.
+- [ ] Complete extracted-audio reuse and partial-workflow subtitle editor compatibility.
 - [ ] Implement result-video promotion with provenance and independent storage.
 - [ ] Implement video library, asset detail and workflow creation UI.
 - [ ] Integrate existing job detail, editor and job queue with assets.
@@ -51,3 +53,14 @@ Real tests: no Gemini requests. Mark tasks only after verification, not on start
 - Policy tests prove that translation requires subtitle input, subtitle-free encoding has no paid stages, and selected subtitle/audio reuse skips the corresponding generation stages.
 - Verified: 3 workflow policy tests, 5 subtitle artifact tests, 6 asset API tests, 6 upload-only API tests.
 - These are planning/input APIs, not a completed workflow executor. Worker branching, audio artifact reuse, job snapshots and UI remain required before release. No production deployment or paid requests.
+
+## Workflow execution checkpoint
+
+- `POST /api/videos/<asset_id>/jobs` creates an independent queued job with fixed options/source asset and copied subtitle input. Request IDs are idempotent; changed requests conflict. A runnable manifest is published only after its inputs exist.
+- Asset references are created under the same registry lock as deletion. Jobs read the independent asset source instead of duplicating the original video for each run.
+- Worker executes audio-only, transcription-only, transcription+translation, translation-only, encoding-only and full workflows. Existing legacy full jobs preserve their compatibility path.
+- Translation-only skips audio/transcription. Encoding-only skips all LLM stages and can encode without subtitles; video-only media is supported. Audio-only publishes downloadable `audio.wav`.
+- New non-encoding jobs do not initialize an encoder. Selected subtitle input is digest-checked and retains its original timing.
+- Verified API-to-worker tests cover eight template/input combinations, result downloads, request idempotency, source deletion protection, subtitle snapshot independence, video-only encoding and translation-failure retry without repeating transcription.
+- Entire backend test suite: **299 tests passed**, with `PAID_LLM_ENABLED=false`. Workflow media/provider operations are mocked here; actual synthetic FFmpeg E2E remains a release gate.
+- Still pending: audio reuse, video registration validation/migration, editor compatibility for partial tracks, full frontend, synthetic media/browser E2E and paid-disabled deployment. Existing user files and live services were not changed.

@@ -35,7 +35,8 @@ class MultilingualTests(unittest.TestCase):
         self.assertEqual(burn[burn.index("-vf") + 1], "subtitles=translated.srt")
 
     def test_multilingual_output_validation_rejects_missing_or_extra_default_tracks(self):
-        source = {"duration": 5, "streams": [{"codec_type": "video", "width": 640, "height": 360}]}
+        source = {"duration": 5, "streams": [{"codec_type": "video", "width": 640, "height": 360},
+                                           {"codec_type": "audio"}]}
         output = {"duration": 5, "streams": [
             {"codec_type": "video", "codec_name": "hevc", "codec_tag_string": "hvc1",
              "width": 640, "height": 360, "pix_fmt": "yuv420p"},
