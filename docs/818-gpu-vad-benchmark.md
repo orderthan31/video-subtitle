@@ -38,6 +38,9 @@ are possible causes; no cause was isolated and no threshold was adjusted.
 
 Private artifacts, excluded from Git:
 
+These raw experiment artifacts were subsequently deleted at the user's request;
+see [cleanup record](poc-cleanup.md). The following paths are historical references.
+
 - `data/production-validation/818-vad/docker-gpu.json`: probabilities, intervals,
   model hash, device, versions, processing times and allocator memory.
 - `docker-gpu-wall.json` in the same directory: host wall time / successful exit.

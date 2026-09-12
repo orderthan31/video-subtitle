@@ -68,9 +68,11 @@ NVIDIA_VAD_PYTHON=/path/to/nemo-environment/bin/python
 NVIDIA_VAD_MODEL=/path/to/vad_multilingual_marblenet.nemo
 ```
 
-The development host reuses its existing `.tools/nemo-poc/Scripts/python.exe` and
-`.tools/nemo-poc/vad_multilingual_marblenet.nemo` automatically when no override
-is provided. Other hosts should create a separate Python 3.12 environment:
+Legacy local installations under `.tools/nemo-poc` are discovered automatically
+when present. That POC environment was removed from the development host at the
+user's request after Docker GPU migration; the embedded Docker model is unchanged.
+For a new native installation, create a separate Python 3.12 environment and set
+the explicit runtime/model paths above:
 
 ```sh
 python -m venv .venv-nvidia
@@ -129,7 +131,8 @@ intervals and 2,091.7573125 seconds as native Windows CPU. Production now uses
 that container with NVIDIA video encoding (also smoke-tested). A subsequent
 CUDA VAD image/full-audio test passed on RTX 5070 Ti, and the worker now uses CUDA
 for VAD-selected jobs. See [GPU timing and output differences](818-gpu-vad-benchmark.md).
-The original CPU environment remains installed for rollback. NeMo
+The prior CPU Docker image remains tagged for rollback; the host POC environments
+were subsequently removed. See [cleanup record](poc-cleanup.md). NeMo
 adds substantial installation size and RAM use despite small weights.
 
 ## Verification

@@ -14,6 +14,7 @@
 
 업로드, Gemini 전사·번역, SRT 생성 및 영상 인코딩까지 구현하고 실제 영상으로 검증 중입니다.
 기능과 검증 범위는 [개발 현황](docs/development-status.md)을 참고합니다.
+POC 임시 데이터·환경 삭제 내역은 [정리 기록](docs/poc-cleanup.md)에 있습니다. 실제 업로드 결과는 보존합니다.
 
 - Resumable chunk upload API
 - 파일시스템 기반 Job 저장소
