@@ -20,6 +20,24 @@ draft form. Desktop uses two panels; mobile stacks video above subtitle tabs.
 
 No worker, LLM, upload or retention behavior changes.
 
+## Final subtitle editing
+
+Completed, non-expired jobs expose the subtitle editor from the detail panel.
+Start/end seconds, text and cue deletion (including an empty completed track) are
+supported. The existing pre-render review flow still requires nonempty tracks.
+The editor protects unsaved changes and prevents background navigation while open.
+Playback is unloaded during editing to release the download lease.
+
+Completed edits save SRT/SMI only; the existing MP4 is not re-encoded. Each save
+writes a new `output/subtitle-edits/<revision>-<uuid>` directory and publishes its
+pointer atomically in job metadata. Original output files and previous revisions
+remain intact. Downloads and preview resolve the same committed revision. Saves
+enforce ownership, expiration, timeline validation, quota and optimistic revision
+checks; completed saves never queue a worker or call an LLM.
+
+The header toggles the sidebar. Desktop preference is stored locally; mobile opens
+it as an overlay and closes it with Escape, the backdrop or a navigation choice.
+
 Checks:
 
 ```powershell

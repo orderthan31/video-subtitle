@@ -11,13 +11,13 @@ def track_languages(options):
         **{f"translated.{language}": language for language in options.additional_languages}}
 
 
-def validate_tracks(tracks, options, duration):
+def validate_tracks(tracks, options, duration, *, allow_empty=False):
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError("Invalid subtitle media duration")
     if set(tracks) != set(track_languages(options)):
         raise ValueError("Subtitle tracks do not match job languages")
     for cues in tracks.values():
-        if not isinstance(cues, list) or not 1 <= len(cues) <= 10000:
+        if not isinstance(cues, list) or not (0 if allow_empty else 1) <= len(cues) <= 10000:
             raise ValueError("Each subtitle track requires 1 to 10000 cues")
         previous_end = 0
         segments = []

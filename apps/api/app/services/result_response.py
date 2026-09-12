@@ -32,6 +32,9 @@ class ResultResponse(FileResponse):
                 raise HTTPException(status_code=409, detail="아직 완료되지 않은 Job입니다.")
             if record.metadata.get("results_expired_at"):
                 raise HTTPException(status_code=410, detail="결과 파일의 보관 기간이 만료되었습니다.")
+            if self.filename != 'final.mp4' and record.metadata.get('subtitle_revision_dir'):
+                self.path = resolve_under(self.repository.storage_root, self.job_id, 'output',
+                    record.metadata['subtitle_revision_dir'], self.filename)
             if self.filename.startswith("translated.") and self.filename.count(".") == 2:
                 if self.filename not in record.metadata.get("result_files", []):
                     raise HTTPException(status_code=404, detail="결과 파일을 찾을 수 없습니다.")

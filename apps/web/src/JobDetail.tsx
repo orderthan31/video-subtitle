@@ -1,7 +1,8 @@
 import {useEffect, useRef, useState} from 'react';
-import {ArrowLeft, Download, FileText, Film, RefreshCw, Search, X} from 'lucide-react';
+import {ArrowLeft, Download, FileText, Film, RefreshCw, Search, X, Pencil} from 'lucide-react';
 import {base, Job, request} from './api';
 import {StageProgress} from './StageProgress';
+import {SubtitleEditor} from './SubtitleEditor';
 import './job-detail.css';
 
 type Cue = {start:number; end:number; text:string};
@@ -17,6 +18,7 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
   const [error,setError] = useState(''), [videoError,setVideoError] = useState(false);
   const [tab,setTab] = useState<'original'|'translated'>('original'), [query,setQuery] = useState('');
   const [time,setTime] = useState(0), [reload,setReload] = useState(0);
+  const [editing,setEditing] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(()=>{heading.current?.focus();},[]);
@@ -59,9 +61,9 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
       <section className="media-panel" aria-label="영상">
         <div className="panel-heading"><h2><Film size={18}/>영상</h2>{preview?.video_available&&<a className="download" href={`${base}/jobs/${id}/results/final.mp4`}><Download size={16}/>MP4</a>}</div>
         <div className="player-surface">
-          {preview?.video_available?<video ref={video} controls playsInline preload="metadata" src={`${base}/jobs/${id}/stream`}
-            onTimeUpdate={e=>setTime(e.currentTarget.currentTime)} onError={()=>setVideoError(true)} onLoadedMetadata={()=>setVideoError(false)}/>:
-            <div className="media-empty"><Film size={36}/><p>{preview?.expired?'영상 보관 기간이 만료되었습니다.':job?.status==='COMPLETED'?'영상 파일이 없습니다.':'영상 처리 완료 후 재생할 수 있습니다.'}</p></div>}
+          {preview?.video_available&&!editing?<video ref={video} controls playsInline preload="metadata" src={`${base}/jobs/${id}/stream`}
+            onTimeUpdate={e=>setTime(e.currentTarget.currentTime)} onError={()=>setVideoError(true)} onLoadedMetadata={e=>{setVideoError(false);if(time>0)e.currentTarget.currentTime=time;}}/>:
+            <div className="media-empty"><Film size={36}/><p>{editing?'자막 편집 중':preview?.expired?'영상 보관 기간이 만료되었습니다.':job?.status==='COMPLETED'?'영상 파일이 없습니다.':'영상 처리 완료 후 재생할 수 있습니다.'}</p></div>}
         </div>
         {videoError&&<p className="alert" role="alert">영상을 재생할 수 없습니다. 브라우저의 코덱 지원이나 연결 상태를 확인하거나 MP4를 다운로드해 주세요.</p>}
         {job&&<dl className="media-info"><div><dt>등록 일시</dt><dd>{new Date(job.created_at).toLocaleString('ko-KR')}</dd></div><div><dt>영상 설명</dt><dd>{job.video_description||'없음'}</dd></div></dl>}
@@ -72,8 +74,9 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
         <div id="cue-panel" role="tabpanel" aria-labelledby={`tab-${tab}`} className="cue-panel" tabIndex={0}>
           {track?.available?(cues.length?cues.map((cue,index)=><button className={'preview-cue '+(time>=cue.start&&time<cue.end?'current':'')} key={`${cue.start}-${index}`} disabled={!preview?.video_available||videoError} onClick={()=>seek(cue)} aria-label={`${timestamp(cue.start)} ${cue.text}`}><time>{timestamp(cue.start)}</time><span>{cue.text}</span></button>):<div className="text-empty"><FileText size={28}/><p>{query?'검색 결과가 없습니다.':'저장된 대사가 없습니다.'}</p></div>):<div className="text-empty"><FileText size={28}/><p>{preview?.expired?'자막 보관 기간이 만료되었습니다.':tab==='original'?'전사 결과를 기다리고 있습니다.':'번역 결과를 기다리고 있습니다.'}</p></div>}
         </div>
-        {job?.status==='COMPLETED'&&!preview?.expired&&<div className="text-download"><a className="download" href={`${base}/jobs/${id}/results/${tab==='original'?'original':'translated'}.srt`}><Download size={16}/>{tab==='original'?'원문 SRT':'번역 SRT'}</a></div>}
+        {job?.status==='COMPLETED'&&!preview?.expired&&<div className="text-download"><button className="icon" title="최종 자막 편집" onClick={()=>setEditing(true)}><Pencil size={18}/></button><a className="download" href={`${base}/jobs/${id}/results/${tab==='original'?'original':'translated'}.srt`}><Download size={16}/>{tab==='original'?'원문 SRT':'번역 SRT'}</a></div>}
       </section>
     </div>
+    {editing&&job&&<SubtitleEditor job={job} initialTrack={tab} onClose={()=>setEditing(false)} onRendered={()=>setReload(n=>n+1)}/>}
   </main>;
 }

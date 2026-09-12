@@ -14,12 +14,21 @@ try {
   const id='b'.repeat(32);
   const job={job_id:id,status:'COMPLETED',original_filename:'sample-video.mp4',expected_size:123456,uploaded_bytes:123456,target_language:'ko',source_language:'en',quality_profile:'balanced',created_at:'2026-09-12T00:00:00Z',error:null,metadata:{}};
   let preview={video_available:true,expired:false,tracks:{original:{available:true,partial:false,cues:[{start:1,end:2,text:'First sentence'},{start:3,end:4,text:'Second sentence'}]},translated:{available:true,partial:false,cues:[{start:1,end:2,text:'첫 번째 문장'},{start:3,end:4,text:'두 번째 문장'}]}}};
+  let draft={revision:0,duration:5,languages:{original:'en',translated:'ko'},tracks:{original:preview.tracks.original.cues,translated:preview.tracks.translated.cues}};
   await page.route('**/api/**',route=>{
     const path=new URL(route.request().url()).pathname;
     if(path.endsWith('/auth/session'))return route.fulfill({json:{enabled:false,user:null}});
     if(path.endsWith('/jobs'))return route.fulfill({json:{jobs:[job]}});
     if(path.endsWith('/'+id))return route.fulfill({json:job});
     if(path.endsWith('/preview'))return route.fulfill({json:preview});
+    if(path.endsWith('/subtitles')){
+      if(route.request().method()==='PUT'){
+        const body=route.request().postDataJSON();
+        draft={...draft,tracks:body.tracks,revision:draft.revision+1};
+        preview={...preview,tracks:{original:{available:true,partial:false,cues:draft.tracks.original},translated:{available:true,partial:false,cues:draft.tracks.translated}}};
+      }
+      return route.fulfill({json:draft});
+    }
     if(path.endsWith('/stream')) {
       const range=route.request().headers()['range']?.match(/bytes=(\d+)-(\d*)/);
       if(range){const start=Number(range[1]),end=range[2]?Math.min(Number(range[2]),media.length-1):media.length-1;
@@ -47,6 +56,31 @@ try {
   await page.locator('video').evaluate(v=>{v.muted=true;return v.play();});
   await page.waitForFunction(()=>document.querySelector('video').currentTime>3.1);
   await page.locator('video').evaluate(v=>v.pause());
+  await page.getByTitle('사이드바 닫기',{exact:true}).filter({visible:true}).first().click();
+  assert.equal(await page.locator('.workspace-nav').isVisible(),false);
+  await page.getByTitle('사이드바 열기',{exact:true}).click();
+  await page.setViewportSize({width:390,height:844});
+  await page.getByTitle('사이드바 열기',{exact:true}).click();
+  assert.equal(await page.locator('.workspace-nav').isVisible(),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.workspace-nav').isVisible(),false);
+  await page.getByRole('tab',{name:'번역 자막',exact:true}).click();
+  await page.getByTitle('최종 자막 편집').click();
+  await page.getByLabel('자막 1 시작',{exact:true}).fill('0.5');
+  await page.getByLabel('자막 1 종료',{exact:true}).fill('2.5');
+  await page.getByLabel('자막 1 문구',{exact:true}).fill('수정한 자막');
+  await page.getByTitle('자막 2 삭제',{exact:true}).click();
+  await page.screenshot({path:'data/final-editor-mobile.png',fullPage:true});
+  await page.getByTitle('자막 저장',{exact:true}).click();
+  await page.getByText('저장되었습니다.',{exact:true}).waitFor();
+  assert.deepEqual(draft.tracks.translated,[{start:0.5,end:2.5,text:'수정한 자막'}]);
+  await page.getByTitle('편집 닫기',{exact:true}).click();
+  await page.getByText('수정한 자막',{exact:true}).waitFor();
+  await page.getByTitle('최종 자막 편집').click();
+  await page.getByLabel('자막 1 문구',{exact:true}).fill('버릴 변경');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'변경 버리고 닫기'}).click();
+  await page.setViewportSize({width:1440,height:900});
   await page.getByRole('button',{name:'영상 추가',exact:true}).filter({visible:true}).click();
   await page.getByLabel('영상 설명 (선택)').fill('preserved draft');
   await page.keyboard.press('Escape');

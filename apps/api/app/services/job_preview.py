@@ -13,6 +13,8 @@ def read_preview(repository, record):
     tracks = {}
     draft = None
     draft_path = path('work', 'subtitle-draft.json')
+    if record.metadata.get('subtitle_revision_dir'):
+        draft_path = path('output', record.metadata['subtitle_revision_dir'], 'draft.json')
     if not expired and draft_path.is_file():
         draft = read_json(draft_path).get('tracks', {})
     for name, filename in [('original', 'transcript'), ('translated', 'translated')]:

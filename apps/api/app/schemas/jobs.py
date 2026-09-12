@@ -95,9 +95,9 @@ class SubtitleCue(BaseModel):
 
 
 class SubtitleUpdate(BaseModel):
-    revision: int = Field(ge=1)
+    revision: int = Field(ge=0)
     action: Literal["save", "render"] = "save"
-    tracks: dict[str, Annotated[list[SubtitleCue], Field(min_length=1, max_length=10000)]] = Field(min_length=2, max_length=6)
+    tracks: dict[str, Annotated[list[SubtitleCue], Field(min_length=0, max_length=10000)]] = Field(min_length=2, max_length=6)
 
 
 def job_to_response(record: JobRecord) -> JobResponse:

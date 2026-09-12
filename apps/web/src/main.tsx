@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Captions, Upload, FileVideo, Download, Trash2, X, Pause, Play, RefreshCw, Check, Clock, Pencil, Plus, FolderOpen, ListVideo, CircleCheck, History, SlidersHorizontal} from 'lucide-react';
+import {Captions, Upload, FileVideo, Download, Trash2, X, Pause, Play, RefreshCw, Check, Clock, Pencil, Plus, FolderOpen, ListVideo, CircleCheck, History, SlidersHorizontal, PanelLeftClose, PanelLeftOpen} from 'lucide-react';
 import {base, Job, request, resumeUpload, uploadRequest} from './api';
 import {abortable} from './abortable';
 import {UploadQueue, UploadItem} from './upload-queue';
@@ -20,6 +20,13 @@ const bytes = (n: number) => n >= 1024**3 ? `${(n/1024**3).toFixed(2)} GB` : `${
 const languageName = (code: string) => ({ko:'한국어',en:'영어',ja:'일본어',zh:'중국어',es:'스페인어'}[code] || code);
 
 function App() {
+  const [sidebarOpen,setSidebarOpen]=useState(()=>{
+    if(matchMedia('(max-width:720px)').matches)return false;
+    try{return localStorage.getItem('sidebar-open')!=='false';}catch{return true;}
+  });
+  useEffect(()=>{if(!matchMedia('(max-width:720px)').matches){try{localStorage.setItem('sidebar-open',String(sidebarOpen));}catch{}}},[sidebarOpen]);
+  useEffect(()=>{const media=matchMedia('(max-width:720px)');const change=()=>{if(media.matches)setSidebarOpen(false);else{try{setSidebarOpen(localStorage.getItem('sidebar-open')!=='false');}catch{setSidebarOpen(true);}}};media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
+  useEffect(()=>{const close=(e:KeyboardEvent)=>{if(e.key==='Escape'&&matchMedia('(max-width:720px)').matches)setSidebarOpen(false);};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close);},[]);
   const [jobs,setJobs] = useState<Job[]>([]), [error,setError] = useState(''), [online,setOnline] = useState(false);
   const [file,setFile] = useState<File|null>(null), [preview,setPreview] = useState('');
   const [source,setSource] = useState('auto'), [target,setTarget] = useState('ko'), [quality,setQuality] = useState('balanced');
@@ -136,12 +143,13 @@ function App() {
   const total = jobs.length+localUploads.filter(item=>!jobs.some(job=>job.job_id===item.jobId)).length;
   const active = jobs.filter(job=>!terminal(job)).length+localUploads.filter(item=>!jobs.some(job=>job.job_id===item.jobId)).length;
   const filters = [['all','전체 작업',FolderOpen],['active','진행 중',ListVideo],['done','완료',CircleCheck],['history','작업 이력',History]] as const;
-  return <>
-    <header><a className="brand" href="#/"><Captions size={27}/><span>영상 자막 작업실</span></a><div className="header-session"><span className={'connection '+(online?'online':'')}>{online?'서버 연결됨':'서버 연결 끊김'}</span><AccountMenu/></div></header>
-    <aside className="workspace-nav" aria-label="작업 탐색">
+  return <div className={sidebarOpen?'app-shell sidebar-open':'app-shell sidebar-collapsed'}>
+    <header><div className="brand-controls"><button className="icon" title={sidebarOpen?'사이드바 닫기':'사이드바 열기'} aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" onClick={()=>setSidebarOpen(value=>!value)}>{sidebarOpen?<PanelLeftClose size={21}/>:<PanelLeftOpen size={21}/>}</button><a className="brand" href="#/"><Captions size={27}/><span>영상 자막 작업실</span></a></div><div className="header-session"><span className={'connection '+(online?'online':'')}>{online?'서버 연결됨':'서버 연결 끊김'}</span><AccountMenu/></div></header>
+    {sidebarOpen&&<button className="sidebar-backdrop" title="사이드바 닫기" onClick={()=>setSidebarOpen(false)}/>}
+    <aside id="workspace-sidebar" hidden={!sidebarOpen} className="workspace-nav" aria-label="작업 탐색">
       <button className="primary" onClick={()=>uploadDialog.current?.showModal()}><Plus size={20}/>영상 추가</button>
       <p className="nav-heading">내 작업실</p>
-      <nav>{filters.map(([value,label,Icon])=><button key={value} aria-current={!detailId&&filter===value?'page':undefined} onClick={()=>{setFilter(value);location.hash='/';}}><Icon size={20}/><span>{label}</span>{value==='all'&&<small>{total}</small>}{value==='active'&&<small>{active}</small>}</button>)}</nav>
+      <nav>{filters.map(([value,label,Icon])=><button key={value} aria-current={!detailId&&filter===value?'page':undefined} onClick={()=>{setFilter(value);location.hash='/';if(matchMedia('(max-width:720px)').matches)setSidebarOpen(false);}}><Icon size={20}/><span>{label}</span>{value==='all'&&<small>{total}</small>}{value==='active'&&<small>{active}</small>}</button>)}</nav>
       <div className="nav-footer"><Captions size={18}/><span>영상 자막 작업실</span></div>
     </aside>
     <main className={detailId?'workspace-main detail-active':'workspace-main'}>
@@ -206,6 +214,6 @@ function App() {
     {detailId&&<JobDetail key={detailId} id={detailId} labels={labels}/>}
     {reviewJob&&<SubtitleEditor job={reviewJob} onClose={()=>setReviewJob(null)} onRendered={()=>void refresh()}/>}
     {confirm&&<div className="overlay"><div role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog"><h2 id="delete-title">작업을 삭제할까요?</h2><p>{confirm.original_filename}</p><p>작업 기록과 남아 있는 영상·자막 파일이 함께 삭제됩니다.</p><div><button autoFocus onClick={()=>setConfirm(null)}>돌아가기</button><button className="destructive" disabled={!!pending} onClick={()=>void action(confirm,'delete')}>삭제</button></div></div></div>}
-  </>;
+  </div>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><AuthGate><App/></AuthGate></React.StrictMode>);

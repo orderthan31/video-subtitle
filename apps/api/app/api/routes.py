@@ -23,6 +23,7 @@ from app.services.storage_guard import StorageGuard, StorageLimitError
 from app.services.upload_service import UploadConflictError, UploadService
 from app.services.result_response import ResultResponse
 from app.services.job_preview import read_preview
+from app.services.final_subtitles import read_final_draft, save_final_draft
 from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
@@ -232,6 +233,13 @@ def get_job(job_id: str):
 def get_subtitle_draft(job_id: str):
     with job_lock(repository, job_id):
         record = _read_job_or_404(job_id)
+        if record.status == JobStatus.COMPLETED:
+            if record.metadata.get('results_expired_at'):
+                raise HTTPException(status_code=410, detail="결과 파일의 보관 기간이 만료되었습니다.")
+            try:
+                return read_final_draft(repository, record)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="편집할 자막 자료가 없습니다.")
         if record.status != JobStatus.AWAITING_REVIEW:
             raise HTTPException(status_code=409, detail="자막 검토 대기 상태가 아닙니다.")
         return read_draft(repository, record)
@@ -253,6 +261,31 @@ def stream_job_video(job_id: str):
 def update_subtitle_draft(job_id: str, payload: SubtitleUpdate):
     with job_lock(repository, job_id, "execution"), job_lock(repository, job_id):
         record = _read_job_or_404(job_id)
+        if record.status == JobStatus.COMPLETED:
+            if record.metadata.get('results_expired_at'):
+                raise HTTPException(status_code=410, detail="결과 파일의 보관 기간이 만료되었습니다.")
+            if payload.action != 'save':
+                raise HTTPException(status_code=409, detail="완료 작업은 자막 파일 저장만 지원합니다.")
+            try:
+                current = read_final_draft(repository, record)
+                if payload.revision != current['revision']:
+                    raise HTTPException(status_code=409, detail="다른 창에서 수정했습니다. 다시 열어 최신 자막을 확인하세요.")
+                tracks = {name: [cue.model_dump(exclude_none=True) for cue in cues] for name, cues in payload.tracks.items()}
+                with job_lock(repository, '0' * 32):
+                    draft = save_final_draft(repository, record, tracks, current['duration'], current['revision'] + 1,
+                        lambda size: assert_capacity(repository.storage_root, settings.service_quota_bytes,
+                            settings.min_free_space_bytes, additional=size))
+                return {**draft, 'status': 'COMPLETED'}
+            except StorageLimitError as exc:
+                raise HTTPException(status_code=507, detail=str(exc)) from exc
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="편집할 자막 자료가 없습니다.")
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except OSError as exc:
+                if exc.errno in {errno.ENOSPC, errno.EDQUOT} or getattr(exc, 'winerror', None) == 112:
+                    raise HTTPException(status_code=507, detail="자막 저장 공간이 부족합니다.") from exc
+                raise
         if record.status != JobStatus.AWAITING_REVIEW:
             raise HTTPException(status_code=409, detail="자막 검토 대기 상태가 아닙니다.")
         current = read_draft(repository, record)
