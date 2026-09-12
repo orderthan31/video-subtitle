@@ -48,7 +48,7 @@ docker compose --env-file .env.docker up --build -d --wait
 
 웹: http://localhost:8080. 기본은 CPU 인코딩이며 GPU 설정, 포트 변경, 볼륨 보관,
 인증 및 검증 범위는 [Docker 실행 가이드](docs/docker.md)에 정리했습니다.
-현재 개발 PC에는 Docker가 없어 실제 컨테이너 빌드·기동 검증은 별도입니다.
+현재 개발 PC에는 Docker를 설치했으며, 필수 Windows 재부팅 후 컨테이너 빌드·기동 검증이 남아 있습니다.
 
 ## 로컬 실행
 

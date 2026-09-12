@@ -1,0 +1,17 @@
+# Reuse an existing host job directory instead of the default named volume.
+# Stop every native API/worker before allowing container writes to this directory.
+services:
+  api:
+    volumes:
+      - type: bind
+        source: ${VIDEO_HOST_JOBS_DIR:?Set VIDEO_HOST_JOBS_DIR to an existing absolute job directory}
+        target: /data/video-jobs
+        bind:
+          create_host_path: false
+  worker:
+    volumes:
+      - type: bind
+        source: ${VIDEO_HOST_JOBS_DIR:?Set VIDEO_HOST_JOBS_DIR to an existing absolute job directory}
+        target: /data/video-jobs
+        bind:
+          create_host_path: false

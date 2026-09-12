@@ -123,8 +123,9 @@ References: [Docker GPU support](https://docs.docker.com/desktop/features/gpu/),
 [PyTorch wheel combinations](https://pytorch.org/get-started/previous-versions/),
 [TorchAudio compatibility](https://docs.pytorch.org/audio/main/installation.html).
 
-These optional images have not been built on the development host because Docker
-is absent. GPU inference is implemented but not hardware-validated here; the
+These optional images have not been built on the development host. Docker and WSL
+are now installed, but a required Windows restart is pending. GPU inference is
+implemented but not hardware-validated here; the
 existing CPU environment is deliberately not replaced. NeMo adds substantial
 installation size and RAM use despite small weights.
 
