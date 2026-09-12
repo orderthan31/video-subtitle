@@ -36,6 +36,8 @@ class GeminiProvider:
 
     @asynccontextmanager
     async def _client(self, response_hook):
+        if os.getenv('PAID_LLM_ENABLED', 'false').lower() != 'true':
+            raise RuntimeError('Paid LLM calls are disabled (PAID_LLM_ENABLED=false)')
         async with httpx.AsyncClient(timeout=120, event_hooks={"response": [response_hook]}) as transport:
             sdk = genai.Client(api_key=self.key, vertexai=False, http_options=types.HttpOptions(
                 api_version="v1beta", timeout=120000, httpx_async_client=transport,

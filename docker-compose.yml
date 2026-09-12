@@ -37,6 +37,7 @@ services:
     environment:
       <<: *storage
       GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in the root .env}
+      PAID_LLM_ENABLED: ${PAID_LLM_ENABLED:-false}
       GEMINI_TRANSCRIPTION_MODEL: ${GEMINI_TRANSCRIPTION_MODEL:-gemini-3.8-flash}
       GEMINI_TRANSLATION_MODEL: ${GEMINI_TRANSLATION_MODEL:-gemini-3.8-flash}
       GEMINI_AUDIO_FILTER_MODEL: ${GEMINI_AUDIO_FILTER_MODEL:-gemini-3.8-flash}
