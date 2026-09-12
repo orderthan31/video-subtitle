@@ -40,6 +40,7 @@ try {
     $compose = @('compose', '--env-file', '.env', '-f', 'docker-compose.yml', '-f', 'docker-compose.vad.yml',
         '-f', 'docker-compose.gpu.yml', '-f', 'docker-compose.host-data.yml')
     if ($VadDevice -eq 'cuda') { $compose += @('-f', 'docker-compose.vad-gpu.yml') }
+    $compose += @('-f', 'docker-compose.preview.yml')
     $operation = @(switch ($Action) {
         'start' { @('up', '-d', '--no-build', '--wait') }
         'build' { @('build') }

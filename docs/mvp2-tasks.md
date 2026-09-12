@@ -95,3 +95,13 @@ Real tests: no Gemini requests. Mark tasks only after verification, not on start
 - Screenshots inspected: `data/mvp2-library-desktop.png`, `data/mvp2-workflow-mobile.png`. Fixed an inherited full-width button rule that squeezed the library heading.
 - Development frontend: `http://127.0.0.1:5183`. It is not the completed live deployment: the running production API/web have not been rebuilt yet, and browser tests intercept every API request.
 - Remaining: actual media workflow E2E, broader API ownership/failure gates, Docker rebuild and paid-disabled preview deployment, user-data migration verification, and final requirements audit.
+
+## Media E2E and deployment preparation
+
+- Added real FFmpeg API-to-worker E2E for all templates, including audio reuse, selected subtitle translation, soft-subtitle encoding, result promotion, parent-job deletion and re-encoding the promoted video. Only model responses are local substitutes; the real LLM client is forbidden by the fixture.
+- Full backend suite: **311 tests passed** with paid calls disabled.
+- Built API/web/GPU worker images; isolated no-network GPU runtime checks passed with the same driver capabilities as Compose.
+- Added a non-interpolated paid-disabled preview overlay and applied it last in the preview launcher.
+- Backed up and SHA-256-verified 593 user files, applied migration for 818/1091/1001.mp4, verified all 590 retained non-manifest artifacts unchanged and all three copied originals identical. See `mvp2-deployment-checkpoint.md` for exact backup and asset IDs.
+- **Deployment is not completed:** the safety reviewer requires explicit user approval for production container replacement. The assistant asked for approval and did not bypass the rejection. API/web remain unchanged and the old worker remains stopped. Rollback image IDs and procedure are documented.
+- Keep the goal active. Remaining: restart approval, guarded deployment verification, deployed UI/data checks and final acceptance audit.
