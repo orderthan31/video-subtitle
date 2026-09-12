@@ -8,13 +8,13 @@
 - [x] Connect upload-only frontend and validate video metadata on registration.
 - [x] Implement idempotent legacy migration and source/reference protection.
 - [x] Validate real video registration and lease-protected source range streaming.
-- [ ] Implement asset-scoped SRT attachments and artifact input snapshots.
+- [x] Implement asset-scoped SRT attachments and artifact input snapshots.
 - [x] Add SRT attachment/version import APIs, immutable artifact storage and snapshot primitives.
 - [x] Define and test exact workflow stages and input compatibility.
-- [ ] Implement independent workflow templates and checkpoint-safe execution.
+- [x] Implement independent workflow templates and checkpoint-safe execution.
 - [x] Connect all six templates to job creation, fixed subtitle inputs and stage-selective worker execution.
 - [x] Complete extracted-audio reuse and partial-workflow subtitle editor compatibility.
-- [ ] Implement result-video promotion with provenance and independent storage.
+- [x] Implement result-video promotion with provenance and independent storage.
 - [x] Implement video library, asset detail and workflow creation UI.
 - [x] Integrate existing job detail, editor and job queue with assets.
 - [ ] Validate synthetic media E2E, API permissions, failure/retry and migration.
@@ -22,6 +22,13 @@
 - [ ] Deploy with paid calls disabled, verify existing data and commit/push.
 
 Real tests: no Gemini requests. Mark tasks only after verification, not on start.
+
+Implementation audit: the three umbrella implementation tasks above are supported by
+`test_subtitle_artifacts.py`, `test_workflow_execution.py` and
+`test_workflow_media_e2e.py`, all included in the verified 311-test run. Their
+previous unchecked state was stale. This does not close the deployment or final
+acceptance gates. Explicit restart approval is still pending; no further
+production restart attempt has been made.
 
 ## Foundation checkpoint
 
