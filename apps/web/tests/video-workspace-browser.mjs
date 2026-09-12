@@ -39,6 +39,7 @@ try{
   });
   const url=process.env.WEB_URL||'http://127.0.0.1:5183';
   await page.goto(url);
+  assert.equal(await page.locator('input[type=file]').first().getAttribute('accept'),null);
   await page.getByRole('heading',{name:/^원본 보관함/}).waitFor();
   await page.locator('.asset-row').waitFor();
   assert.equal(await page.locator('.asset-list video').count(),0);
@@ -72,11 +73,16 @@ try{
     await page.getByRole('button',{name:'취소',exact:true}).click();
   }
   await page.goto(url);
-  await page.locator('input[type=file]').first().setInputFiles([{name:'one.mp4',mimeType:'video/mp4',buffer:Buffer.alloc(100)},{name:'two.mp4',mimeType:'video/mp4',buffer:Buffer.alloc(100)}]);
-  await page.waitForFunction(()=>document.querySelector('.upload-shelf')?.textContent.includes('one.mp4'));
+  await page.locator('input[type=file]').first().setInputFiles([{name:'notes.txt',mimeType:'text/plain',buffer:Buffer.from('not video')}]);
+  await page.getByRole('alert').filter({hasText:'영상 파일만'}).waitFor();
+  assert.equal(uploads.length,0);
+  assert.equal(await page.locator('input[type=file]').first().inputValue(),'');
+  await page.locator('input[type=file]').first().setInputFiles([{name:'여행 영상 (최종).mp4',mimeType:'video/mp4',buffer:Buffer.alloc(100)},{name:'1001.mp4',mimeType:'video/mp4',buffer:Buffer.alloc(100)}]);
+  await page.waitForFunction(()=>document.querySelector('.upload-shelf')?.textContent.includes('여행 영상 (최종).mp4'));
   await page.locator('.asset-row').click();
   await page.waitForTimeout(1800);
   assert.equal(uploads.length,2);assert.ok(uploads.every(u=>u.asset_id));assert.equal(maxChunkActive,1);
+  assert.deepEqual(uploads.map(u=>u.filename),['여행 영상 (최종).mp4','1001.mp4']);
   assert.equal(await page.locator('input[type=file]').first().inputValue(),'');
   assert.deepEqual(errors,[]);
   console.log('MVP2 browser passed: library/detail, workflow creation, original playback, 4 widths, serial uploads across navigation.');

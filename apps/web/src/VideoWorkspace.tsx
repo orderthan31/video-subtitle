@@ -6,6 +6,7 @@ import {JobDetail} from './JobDetail';
 import {StageProgress} from './StageProgress';
 import {SubtitleEditor} from './SubtitleEditor';
 import {UploadItem,UploadQueue} from './upload-queue';
+import {isVideoFile} from './video-file';
 import {WorkflowDialog} from './WorkflowDialog';
 import {durationLabel,jsonPost,sizeLabel,statusLabels,SubtitleInput,templates,VideoAsset,VideoDetail,VideoUpload} from './video-api';
 import './video-workspace.css';
@@ -42,7 +43,18 @@ export function VideoWorkspace(){
   useEffect(()=>{if(!assetId)return;const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;
     const poll=async()=>{try{const d=await request<VideoDetail>(`/videos/${assetId}`,{signal:controller.signal});const s=await request<{subtitles:SubtitleInput[]}>(`/videos/${assetId}/subtitles`,{signal:controller.signal});if(!controller.signal.aborted){setDetail(d);setSubtitleInputs(s.subtitles);}}catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:'영상 조회 실패');}finally{if(!controller.signal.aborted)timer=setTimeout(poll,3000);}};void poll();return()=>{controller.abort();clearTimeout(timer);};},[assetId]);
   async function action(key:string,operation:()=>Promise<unknown>){if(busy)return;setBusy(key);setError('');try{await operation();await refresh();setConfirm(null);}catch(e){setError(e instanceof Error?e.message:'요청 실패');}finally{setBusy('');}}
-  function chooseFiles(files:FileList|null){if(!files)return;for(const file of Array.from(files)){if(resume.current){queue.add(file,{legacy:resume.current.legacy},resume.current.id);resume.current=null;break;}queue.add(file,{});}if(input.current)input.current.value='';}
+  function chooseFiles(files:FileList|null){
+    if(!files)return;
+    const selected=Array.from(files),rejected:string[]=[];
+    if(input.current)input.current.value='';
+    setError('');
+    for(const file of selected){
+      if(!isVideoFile(file)){rejected.push(file.name);continue;}
+      if(resume.current){queue.add(file,{legacy:resume.current.legacy},resume.current.id);resume.current=null;break;}
+      queue.add(file,{});
+    }
+    if(rejected.length)setError(`영상 파일만 업로드할 수 있습니다: ${rejected.join(', ')}`);
+  }
   function chooseResume(id:string,legacy=false){resume.current={id,legacy};input.current?.click();}
   async function attachSrt(file:File|undefined){if(!file||!assetId)return;await action('srt',async()=>{if(file.size>4*1024**2)throw new Error('SRT는 4MB 이하만 첨부할 수 있습니다.');await jsonPost(`/videos/${assetId}/subtitles`,{filename:file.name,language:'auto',content:await file.text()});const s=await request<{subtitles:SubtitleInput[]}>(`/videos/${assetId}/subtitles`);setSubtitleInputs(s.subtitles);});if(srtInput.current)srtInput.current.value='';}
   const terminal=(j:Job)=>['COMPLETED','FAILED','CANCELLED'].includes(j.status);
@@ -59,7 +71,7 @@ export function VideoWorkspace(){
   return <div className={'app-shell video-workspace '+(sidebar?'sidebar-open':'sidebar-collapsed')}>
     <header><div className="brand-controls"><button className="icon sidebar-toggle" title={sidebar?'사이드바 닫기':'사이드바 열기'} aria-label={sidebar?'사이드바 닫기':'사이드바 열기'} aria-expanded={sidebar} onClick={()=>setSidebar(v=>!v)}><Menu className="sidebar-menu-icon" size={22}/><X className="sidebar-close-icon" size={22}/></button><a className="brand" href="#/" aria-label="장면 홈"><span className="brand-mark"><FileVideo size={21}/></span><strong>장면</strong><span className="brand-wordmark">JANGMYEON</span></a></div><div className="header-session"><span className={'connection '+(online?'online':'')}>{online?'연결됨':'연결 확인 중'}</span><AccountMenu/></div></header>
     {sidebar&&<><button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}/><aside className="workspace-nav"><button className="primary" onClick={()=>{resume.current=null;input.current?.click();}}><Plus size={19}/>영상 업로드</button><nav><a href="#/" aria-current={!jobsView&&!jobId?'page':undefined}><FolderOpen size={19}/>원본 보관함<span>{videos.length}</span></a><a href="#/jobs" aria-current={jobsView||jobId?'page':undefined}><ListVideo size={19}/>전체 작업<span>{jobs.length}</span></a></nav></aside></>}
-    <input ref={input} type="file" accept="video/*,.mkv,.mov,.avi,.webm" multiple={!resume.current} hidden onChange={e=>chooseFiles(e.target.files)}/>
+    <input ref={input} type="file" multiple={!resume.current} hidden onChange={e=>chooseFiles(e.target.files)}/>
     <input ref={srtInput} type="file" accept=".srt" hidden onChange={e=>void attachSrt(e.target.files?.[0])}/>
     {jobId?<JobDetail id={jobId} key={jobId} labels={statusLabels} promotedAssetId={videos.find(v=>v.provenance.kind==='result'&&v.provenance.job_id===jobId)?.asset_id}/>:<main className="video-main">
       {error&&<p role="alert" className="alert">{error}<button className="icon" title="오류 닫기" onClick={()=>setError('')}><X size={16}/></button></p>}
