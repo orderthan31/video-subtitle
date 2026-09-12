@@ -84,10 +84,11 @@ class VideoAssetRepository:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def register_upload(self, job_id: str, *, owner_id=None, before_copy) -> dict:
+    def register_upload(self, job_id: str, *, owner_id=None, before_copy, upload_repository=None) -> dict:
         """Also migrates legacy jobs without changing their status or artifacts."""
-        with job_lock(self.jobs, job_id, 'execution'), job_lock(self.jobs, job_id), self.lock():
-            job = self.jobs.read(job_id)
+        jobs = upload_repository or self.jobs
+        with job_lock(jobs, job_id, 'execution'), job_lock(jobs, job_id), self.lock():
+            job = jobs.read(job_id)
             if job.metadata.get('owner_id') != owner_id:
                 raise AssetNotFoundError(job_id)
             asset_id = job.metadata.get('asset_id')
@@ -95,7 +96,7 @@ class VideoAssetRepository:
                 return self.read(asset_id, owner_id=owner_id)
             if job.status == JobStatus.UPLOADING:
                 raise AssetConflictError('Upload is not complete')
-            source = self.jobs.source_path(job)
+            source = jobs.source_path(job)
             if not source.is_file() or source.stat().st_size != job.expected_size:
                 raise AssetConflictError('Complete original video is unavailable')
             asset_id = uuid5(NAMESPACE_URL, 'video-subtitle:upload:' + job_id).hex
@@ -104,7 +105,9 @@ class VideoAssetRepository:
                 provenance={'kind': 'upload', 'upload_id': job_id},
                 before_copy=before_copy, created_at=job.created_at)
             job.metadata['asset_id'] = asset_id
-            self.jobs.save(job)
+            if upload_repository is not None:
+                job.metadata['reserved_bytes'] = 0
+            jobs.save(job)
             return record
 
     def promote_result(self, job_id: str, *, owner_id=None, before_copy) -> dict:
@@ -128,10 +131,21 @@ class VideoAssetRepository:
 
     def delete(self, asset_id: str, *, owner_id=None) -> None:
         with self.lock():
-            self.read(asset_id, owner_id=owner_id)
+            asset = self.read(asset_id, owner_id=owner_id)
             # Do not use jobs.list(): it skips invalid manifests and could miss a reference.
             for path in self.jobs.storage_root.glob('*/job.json'):
                 job = read_json(path)
                 if job.get('metadata', {}).get('asset_id') == asset_id:
                     raise AssetConflictError('Video is referenced by job ' + job['job_id'])
+            provenance = asset.get('provenance', {})
+            if provenance.get('kind') == 'upload':
+                from .repository import FilesystemJobRepository
+                uploads = FilesystemJobRepository(self.jobs.storage_root / '.uploads')
+                upload_id = provenance['upload_id']
+                with job_lock(uploads, upload_id, 'execution'), job_lock(uploads, upload_id):
+                    if uploads.job_file(upload_id).exists():
+                        upload = uploads.read(upload_id)
+                        if upload.metadata.get('owner_id') != owner_id or upload.metadata.get('asset_id') != asset_id:
+                            raise AssetConflictError('Upload reference does not match video')
+                        uploads.delete_job_dir(upload_id)
             shutil.rmtree(self.directory(asset_id))

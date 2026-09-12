@@ -52,6 +52,10 @@ def remaining_reservations(repository, overrides=None):
         if not isinstance(reserved, int) or reserved < 0:
             raise StorageLimitError("Invalid workspace reservation")
         remaining += max(0, reserved - used_bytes(repository.job_dir(record.job_id)))
+    upload_root = repository.storage_root / '.uploads'
+    if upload_root.exists():
+        from .repository import FilesystemJobRepository
+        remaining += remaining_reservations(FilesystemJobRepository(upload_root), overrides)
     return remaining
 
 
