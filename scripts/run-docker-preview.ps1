@@ -3,7 +3,9 @@ param(
     [string]$Action = 'status',
     [string]$StorageRoot = '',
     [int]$WebPort = 5177,
-    [string]$WebOrigin = ''
+    [string]$WebOrigin = '',
+    [ValidateSet('cpu', 'cuda')]
+    [string]$VadDevice = 'cpu'
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -23,6 +25,7 @@ if ($Action -eq 'start') {
 $values = @{
     VIDEO_HOST_JOBS_DIR = (Resolve-Path -LiteralPath $StorageRoot).Path
     DOCKER_WEB_PORT = "$WebPort"
+    NVIDIA_VAD_DEVICE = $VadDevice
     WEB_CORS_ORIGINS = ((@("http://localhost:$WebPort", "http://127.0.0.1:$WebPort", $WebOrigin) | Where-Object { $_ }) -join ',')
 }
 $previous = @{}
@@ -34,6 +37,7 @@ Push-Location $projectRoot
 try {
     $compose = @('compose', '--env-file', '.env', '-f', 'docker-compose.yml', '-f', 'docker-compose.vad.yml',
         '-f', 'docker-compose.gpu.yml', '-f', 'docker-compose.host-data.yml')
+    if ($VadDevice -eq 'cuda') { $compose += @('-f', 'docker-compose.vad-gpu.yml') }
     $operation = @(switch ($Action) {
         'start' { @('up', '-d', '--no-build', '--wait') }
         'build' { @('build') }

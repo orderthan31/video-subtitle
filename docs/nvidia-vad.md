@@ -126,9 +126,10 @@ References: [Docker GPU support](https://docs.docker.com/desktop/features/gpu/),
 The CPU VAD Docker image has now been built and validated on the development
 host after its Windows restart. Full 818 CPU inference retained the same 266
 intervals and 2,091.7573125 seconds as native Windows CPU. Production now uses
-that container with NVIDIA video encoding (also smoke-tested). The separate
-CUDA VAD image/inference remains unverified; video encoding does not validate
-CUDA VAD. The original CPU environment remains installed for rollback. NeMo
+that container with NVIDIA video encoding (also smoke-tested). A subsequent
+CUDA VAD image/full-audio test passed on RTX 5070 Ti, and the worker now uses CUDA
+for VAD-selected jobs. See [GPU timing and output differences](818-gpu-vad-benchmark.md).
+The original CPU environment remains installed for rollback. NeMo
 adds substantial installation size and RAM use despite small weights.
 
 ## Verification
@@ -142,5 +143,5 @@ adds substantial installation size and RAM use despite small weights.
 - Updated CPU inference produced exactly identical 818 probabilities and intervals.
 - Docker's pinned model downloader was exercised successfully outside Docker.
 - CPU Docker build/inference and NVENC encoding are verified. Device selection,
-  failure/fallback/batch bounds are unit-tested; CUDA VAD hardware tests remain.
+  failure/fallback/batch bounds are unit-tested; RTX 5070 Ti CUDA VAD is now verified.
 - Browser UI inspection unavailable in this session; no connected browser.

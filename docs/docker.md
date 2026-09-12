@@ -89,18 +89,19 @@ Compose 프로젝트 이름을 바꾸면 다른 볼륨을 사용한다. 백업�
 
 2026-09-12 개발 PC에 Docker Desktop 4.90.0 (CLI/Engine 29.7.2)과 WSL 2.7.13을 설치하고
 재부팅 후 API·웹·VAD 워커 이미지를 실제 빌드하여 컨테이너로 전환했다.
-현재는 CPU VAD + NVIDIA NVENC 영상 인코딩이며, CUDA VAD 이미지 검증은 별도다.
+CPU VAD 검증 후 CUDA VAD 이미지도 빌드·검증했으며, 현재는 GPU VAD + NVIDIA NVENC 영상 인코딩이다.
 호스트 8080 포트 사용이 거절되어 웹은 기존 5177 포트, API는 8000 포트로 기동했다.
 기존 Tailscale HTTPS 프록시는 5177을 계속 가리키므로 모바일 주소는 변경되지 않았다.
 네이티브 API/워커와 중복 실행하지 않으며, 기존 작업 폴더를 bind mount한다.
 
 개발 PC용 재기동 스크립트는 루트 `.env`와 기존 `data/user-preview/jobs`를 사용한다.
-API 키를 이미지나 스크립트에 넣지 않는다. GPU VAD가 아닌 **CPU VAD + GPU 인코딩** 구성이다.
+API 키를 이미지나 스크립트에 넣지 않는다. `-VadDevice cuda`는 GPU VAD,
+생략하거나 `-VadDevice cpu`를 지정하면 CPU VAD이며 영상 인코딩은 둘 다 GPU다.
 
 ```powershell
 ./scripts/run-docker-preview.ps1 status
-./scripts/run-docker-preview.ps1 build
-./scripts/run-docker-preview.ps1 start -WebOrigin https://YOUR-HOST.YOUR-TAILNET.ts.net
+./scripts/run-docker-preview.ps1 build -VadDevice cuda
+./scripts/run-docker-preview.ps1 start -VadDevice cuda -WebOrigin https://YOUR-HOST.YOUR-TAILNET.ts.net
 ./scripts/run-docker-preview.ps1 check
 ```
 
@@ -117,4 +118,5 @@ API 키를 이미지나 스크립트에 넣지 않는다. GPU VAD가 아닌 **CP
 - Docker CPU VAD로 818 전체 오디오 분석: 266구간, 2,091.7573125초.
   Windows CPU 결과와 구간 목록 일치. 출력: `data/production-validation/818-vad/docker-cpu.json`.
 - 워커 내부 Gemini 모델 정보 조회 HTTP 200. 이번 전환 검증에서 유료 전사·번역은 호출하지 않음.
+- 이후 818 GPU VAD 시험: 분석 7.31초, 전체 실행 16.17초. [측정과 제한](818-gpu-vad-benchmark.md).
 저장소에는 Docker CPU 빌드·기동 검증용 GitHub Actions를 포함한다. GPU 검증은 GPU 호스트에서 별도 실행한다.

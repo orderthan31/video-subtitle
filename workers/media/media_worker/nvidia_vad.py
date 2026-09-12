@@ -115,6 +115,11 @@ def main():
     model.preprocessor.featurizer.dither = 0.0
     if list(model.cfg.labels) != ["background", "speech"]:
         raise ValueError("Expected MarbleNet background/speech labels")
+    if device == "cuda":
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+    model_load_seconds = time.monotonic() - started
+    inference_started = time.monotonic()
     probabilities = []
     with wave.open(str(args.audio), "rb") as audio:
         if audio.getframerate() != 16000 or audio.getsampwidth() != 2:
@@ -139,9 +144,15 @@ def main():
                 probabilities.extend(logits.softmax(dim=-1)[:, 1].cpu().tolist())
                 if first % (hop * batch_limit * 100) == 0:
                     print(f"VAD ({device}) analyzed {min(frames, first + hop * batch_limit) / 16000:.1f}/{duration:.1f}s", flush=True)
+    if device == "cuda":
+        torch.cuda.synchronize()
+    inference_seconds = time.monotonic() - inference_started
     intervals = retained_intervals(probabilities, duration)
     report = {"version": 2, "device": device, "requested_device": requested, "batch_size": batch_limit,
               "torch_version": torch.__version__, "cuda_version": torch.version.cuda,
+              "model_load_seconds": model_load_seconds, "inference_seconds": inference_seconds,
+              "cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated() if device == "cuda" else 0,
+              "cuda_peak_reserved_bytes": torch.cuda.max_memory_reserved() if device == "cuda" else 0,
               "onset": .3, "offset": .15,
               "minimum_non_speech": 3, "padding": .3, "merge_gap": .4, "hop": .08,
               "duration_seconds": duration, "retained_seconds": sum(b - a for a, b in intervals),
