@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
-import {ArrowLeft, Download, FileText, Film, RefreshCw, Search, X, Pencil} from 'lucide-react';
+import {ArrowLeft, Download, FileText, Film, RefreshCw, Search, X, Pencil, FolderPlus, ArrowUpRight, ChevronDown} from 'lucide-react';
 import {base, Job, request} from './api';
+import {VideoAsset} from './video-api';
 import {StageProgress} from './StageProgress';
 import {SubtitleEditor} from './SubtitleEditor';
 import './job-detail.css';
@@ -13,12 +14,14 @@ const timestamp = (value:number) => {
   return [Math.floor(seconds/3600), Math.floor(seconds/60)%60, seconds%60].map(n=>String(n).padStart(2,'0')).join(':');
 };
 
-export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) {
+export function JobDetail({id,labels,promotedAssetId}:{id:string;labels:Record<string,string>;promotedAssetId?:string}) {
   const [job,setJob] = useState<Job|null>(null), [preview,setPreview] = useState<Preview|null>(null);
   const [error,setError] = useState(''), [videoError,setVideoError] = useState(false);
   const [tab,setTab] = useState<'original'|'translated'>('original'), [query,setQuery] = useState('');
   const [time,setTime] = useState(0), [reload,setReload] = useState(0);
   const [editing,setEditing] = useState(false);
+  const [promoting,setPromoting] = useState(false), [promotionError,setPromotionError] = useState('');
+  const promotionDialog = useRef<HTMLDialogElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(()=>{heading.current?.focus();},[]);
@@ -51,9 +54,21 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
     video.current.currentTime = cue.start;
     setTime(cue.start);
   }
+  async function promote(){
+    setPromoting(true);setPromotionError('');
+    try{
+      const asset=await request<VideoAsset>(`/jobs/${id}/promote-video`,{method:'POST'});
+      promotionDialog.current?.close();location.hash=`/videos/${asset.asset_id}`;
+    }catch(e){setPromotionError(e instanceof Error?e.message:'원본 등록에 실패했습니다.');}
+    finally{setPromoting(false);}
+  }
+  const resultFiles=job?.metadata.result_files||[];
+  const downloadFiles=[...new Set([...resultFiles,...(preview?.video_available?['final.mp4']:[])])];
+  const resultLabel=(name:string)=>name==='final.mp4'?'결과 영상 · MP4':name==='audio.wav'?'추출 음성 · WAV':name.replace('original.','전사록 · ').replace('translated.','번역 자막 · ');
   return <main className="job-detail">
     <div className="detail-page-heading"><a href={job?.metadata.asset_id?`#/videos/${job.metadata.asset_id}`:'#/jobs'} className="icon" title="작업 목록으로"><ArrowLeft size={22}/></a>
       <div><p className="eyebrow">작업 상세</p><h1 ref={heading} tabIndex={-1}>{job?.original_filename||'작업 불러오는 중'}</h1></div>
+      {job?.status==='COMPLETED'&&!preview?.expired&&downloadFiles.length>0&&<details className="result-downloads"><summary><Download size={17}/>다운로드<ChevronDown size={14}/></summary><div>{downloadFiles.map(file=><a key={file} href={`${base}/jobs/${id}/results/${encodeURIComponent(file)}`}><Download size={15}/>{resultLabel(file)}</a>)}</div></details>}
       <button className="icon" title="작업 새로고침" onClick={()=>setReload(n=>n+1)}><RefreshCw size={18}/></button>
     </div>
     {error&&<p role="alert" className="alert">{error}</p>}
@@ -61,13 +76,14 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
     {job?.error&&<p className="alert">{job.error}</p>}
     <div className="detail-panels">
       <section className="media-panel" aria-label="영상">
-        <div className="panel-heading"><h2><Film size={18}/>영상</h2>{preview?.video_available&&<a className="download" href={`${base}/jobs/${id}/results/final.mp4`}><Download size={16}/>MP4</a>}</div>
+        <div className="panel-heading"><h2><Film size={18}/>{preview?.video_available?'결과 영상':'원본 영상'}</h2></div>
         <div className="player-surface">
           {videoAvailable&&!editing?<video ref={video} controls playsInline preload="metadata" src={videoUrl}
             onTimeUpdate={e=>setTime(e.currentTarget.currentTime)} onError={()=>setVideoError(true)} onLoadedMetadata={e=>{setVideoError(false);if(time>0)e.currentTarget.currentTime=time;}}/>:
             <div className="media-empty"><Film size={36}/><p>{editing?'자막 편집 중':preview?.expired?'영상 보관 기간이 만료되었습니다.':job?.status==='COMPLETED'?'영상 파일이 없습니다.':'영상 처리 완료 후 재생할 수 있습니다.'}</p></div>}
         </div>
         {videoError&&<p className="alert" role="alert">영상을 재생할 수 없습니다. 브라우저의 코덱 지원이나 연결 상태를 확인하거나 MP4를 다운로드해 주세요.</p>}
+        {job?.status==='COMPLETED'&&preview?.video_available&&!preview.expired&&<div className="result-actions">{promotedAssetId?<a href={`#/videos/${promotedAssetId}`}><ArrowUpRight size={16}/>등록된 원본 열기</a>:<button onClick={()=>{setPromotionError('');promotionDialog.current?.showModal();}}><FolderPlus size={16}/>새 원본으로 등록</button>}</div>}
         {job&&<dl className="media-info"><div><dt>등록 일시</dt><dd>{new Date(job.created_at).toLocaleString('ko-KR')}</dd></div><div><dt>영상 설명</dt><dd>{job.video_description||'없음'}</dd></div></dl>}
       </section>
       <section className="text-panel" aria-label="전사록과 번역 자막">
@@ -80,5 +96,6 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
       </section>
     </div>
     {editing&&job&&<SubtitleEditor job={job} initialTrack={tab} onClose={()=>setEditing(false)} onRendered={()=>setReload(n=>n+1)}/>}
+    <dialog className="confirm-modal promotion-modal" ref={promotionDialog} onCancel={e=>{if(promoting)e.preventDefault();}}><h2>결과 영상을 새 원본으로 등록할까요?</h2><p>가공된 영상의 복사본이 원본 보관함에 추가됩니다. 기존 작업과 자막은 그대로 유지되며, 복사본만큼 저장 공간을 사용합니다.</p>{promotionError&&<p role="alert" className="alert">{promotionError}</p>}<div><button autoFocus disabled={promoting} onClick={()=>promotionDialog.current?.close()}>취소</button><button disabled={promoting} onClick={()=>void promote()}>{promoting?'등록 중…':'새 원본 등록'}</button></div></dialog>
   </main>;
 }

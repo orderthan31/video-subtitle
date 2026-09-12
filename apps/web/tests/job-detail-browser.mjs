@@ -43,6 +43,13 @@ try {
   await page.goto(url+'/#/jobs/'+id);
   await page.locator('.job-detail h1').filter({hasText:job.original_filename}).waitFor();
   await page.waitForFunction(()=>document.querySelector('.player-surface video')?.readyState>=1);
+  await page.locator('.result-downloads summary').click();
+  assert.match(await page.getByRole('link',{name:'결과 영상 · MP4'}).getAttribute('href'),/final\.mp4$/);
+  await page.locator('.result-downloads summary').click();
+  await page.getByRole('button',{name:'새 원본으로 등록',exact:true}).click();
+  await page.locator('.promotion-modal[open]').waitFor();
+  await page.locator('.promotion-modal').getByRole('button',{name:'취소',exact:true}).click();
+  assert.equal(await page.locator('.promotion-modal[open]').count(),0);
   for(const width of [320,390,768,1440]) {
     await page.setViewportSize({width,height:900});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
@@ -86,7 +93,7 @@ try {
   await page.getByTitle('작업 목록으로').click();
   await page.locator('.job-title').click();
   await page.goBack();
-  await page.getByRole('heading',{name:'전체 작업',exact:true}).waitFor();
+  await page.getByRole('heading',{name:/^전체 작업/}).waitFor();
   job.status='TRANSLATING';
   preview={...preview,video_available:false,tracks:{...preview.tracks,translated:{available:false,partial:false,cues:[]}}};
   await page.goto(url+'/#/jobs/'+id);

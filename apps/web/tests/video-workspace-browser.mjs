@@ -39,10 +39,14 @@ try{
   });
   const url=process.env.WEB_URL||'http://127.0.0.1:5183';
   await page.goto(url);
-  await page.getByRole('heading',{name:'원본 보관함',exact:true}).waitFor();
+  await page.getByRole('heading',{name:/^원본 보관함/}).waitFor();
   await page.locator('.asset-row').waitFor();
+  assert.equal(await page.locator('.asset-list video').count(),0);
+  assert.equal(await page.locator('.asset-list a.download').count(),0);
   await page.screenshot({path:'data/mvp2-library-desktop.png',fullPage:true});
   await page.locator('.asset-row').click();
+  assert.equal(await page.locator('.asset-overview video').getAttribute('preload'),'none');
+  await page.locator('.asset-overview video').evaluate(v=>v.load());
   await page.waitForFunction(()=>document.querySelector('.asset-overview video')?.readyState>=1);
   await page.screenshot({path:'data/mvp2-asset-desktop.png',fullPage:true});
   await page.getByRole('button',{name:'새 작업',exact:true}).click();
@@ -56,6 +60,8 @@ try{
   await page.waitForFunction(()=>document.querySelector('.player-surface video')?.readyState>=1);
   assert.match(await page.locator('.player-surface video').getAttribute('src'),/\/videos\//);
   await page.getByTitle('작업 목록으로').click();
+  assert.equal(await page.locator('.video-job-row a.download').count(),0);
+  assert.equal(await page.getByRole('button',{name:'새 원본 등록',exact:true}).count(),0);
   for(const width of [320,390,768,1440]){
     await page.setViewportSize({width,height:900});
     await page.getByRole('button',{name:'새 작업',exact:true}).click();

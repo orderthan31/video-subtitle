@@ -66,7 +66,7 @@ export function AuthGate({children}: {children: ReactNode}) {
       {error && <div className="alert" role="alert">{error}</div>}{children}
     </AuthContext.Provider>;
   }
-  return <><header><a className="brand" href="/"><Captions size={27}/><span>영상 자막 작업실</span></a></header>
+  return <><header><a className="brand" href="/"><Captions size={27}/><span>장면</span></a></header>
     <main className="auth-page"><h1>로그인</h1>
       {error && <div className="alert" role="alert">{error}</div>}
       {!session ? error ? <button className="primary" onClick={() => setAttempt(n => n + 1)}><RefreshCw size={18}/>다시 연결</button>

@@ -76,6 +76,18 @@ def stream_video(asset_id: str, request: Request):
         return AssetVideoResponse(VideoAssetRepository(routes.repository), asset_id, request.state.owner_id)
 
 
+@router.get('/videos/{asset_id}/thumbnail')
+def thumbnail_video(asset_id: str, request: Request):
+    with asset_errors():
+        return AssetVideoResponse(VideoAssetRepository(routes.repository), asset_id, request.state.owner_id, thumbnail=True)
+
+
+@router.get('/videos/{asset_id}/download')
+def download_video(asset_id: str, request: Request):
+    with asset_errors():
+        return AssetVideoResponse(VideoAssetRepository(routes.repository), asset_id, request.state.owner_id, download=True)
+
+
 @router.delete('/videos/{asset_id}', status_code=204)
 def delete_video(asset_id: str, request: Request):
     with asset_errors(), job_lock(routes.repository, '0' * 32):

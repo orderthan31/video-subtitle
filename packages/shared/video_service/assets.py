@@ -86,6 +86,8 @@ class VideoAssetRepository:
             }
             if media is not None:
                 record['media'] = media
+                from .thumbnails import generate_thumbnail
+                generate_thumbnail(destination, directory, media.get('duration'))
             write_json_atomic(manifest, record)
             return record
         finally:

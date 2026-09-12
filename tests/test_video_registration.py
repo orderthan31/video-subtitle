@@ -115,6 +115,28 @@ class VideoRegistrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 206)
         self.assertEqual(response.content, content[:64])
         self.assertEqual(self.repo.list(), [])
+        poster = self.client.get('/api/videos/' + asset['asset_id'] + '/thumbnail')
+        self.assertEqual(poster.status_code, 200)
+        self.assertEqual(poster.headers['content-type'], 'image/jpeg')
+        self.assertTrue(poster.content.startswith(b'\xff\xd8'))
+        self.assertEqual(poster.headers['cache-control'], 'no-store')
+        self.assertLess(len(poster.content), 100_000)
+        original = self.client.get('/api/videos/' + asset['asset_id'] + '/download')
+        self.assertTrue(original.headers['content-disposition'].startswith('attachment'))
+        self.assertEqual(original.content, content)
+
+    def test_thumbnail_missing_and_owner_are_checked_without_generation(self):
+        job = self.job()
+        assets = VideoAssetRepository(self.repo)
+        asset = assets.register_upload(job.job_id, before_copy=lambda _: None)
+        url = '/api/videos/' + asset['asset_id'] + '/thumbnail'
+        with patch('video_service.thumbnails.generate_thumbnail', side_effect=AssertionError('GET must not decode')):
+            self.assertEqual(self.client.get(url).status_code, 404)
+        from video_service.storage import write_json_atomic
+        asset['owner_id'] = 'someone-else'
+        write_json_atomic(assets.directory(asset['asset_id']) / 'asset.json', asset)
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(self.client.get('/api/videos/' + asset['asset_id'] + '/download').status_code, 404)
 
 
 if __name__ == '__main__':

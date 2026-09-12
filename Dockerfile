@@ -21,6 +21,7 @@ COPY workers/media /app/workers/media
 COPY scripts/manage-account.py /app/scripts/manage-account.py
 COPY scripts/check-container.py /app/scripts/check-container.py
 COPY scripts/migrate-video-assets.py /app/scripts/migrate-video-assets.py
+COPY scripts/backfill-thumbnails.py /app/scripts/backfill-thumbnails.py
 RUN pip install --no-cache-dir /app/packages/shared /app/apps/api /app/workers/media \
     && useradd --uid 10001 --create-home media \
     && mkdir -p /data/video-jobs && chown -R media:media /data
