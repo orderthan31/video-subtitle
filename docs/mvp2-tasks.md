@@ -8,6 +8,8 @@
 - [ ] Connect upload-only frontend and validate video metadata on registration.
 - [ ] Implement idempotent legacy migration and source/reference protection.
 - [ ] Implement asset-scoped SRT attachments and artifact input snapshots.
+- [x] Add SRT attachment/version import APIs, immutable artifact storage and snapshot primitives.
+- [x] Define and test exact workflow stages and input compatibility.
 - [ ] Implement independent workflow templates and checkpoint-safe execution.
 - [ ] Implement result-video promotion with provenance and independent storage.
 - [ ] Implement video library, asset detail and workflow creation UI.
@@ -38,3 +40,14 @@ Real tests: no Gemini requests. Mark tasks only after verification, not on start
 - User-requested deletion removes incomplete uploads. Registered sessions cannot bypass asset deletion; deleting an unreferenced asset also removes its staging upload.
 - Verified this checkpoint: 6 new upload-only tests, 11 asset tests, 10 capacity tests, 21 existing upload tests. Tests use isolated synthetic bytes and no paid calls.
 - Frontend, metadata probing, migration and workflow integration remain pending; no live deployment or real data changes yet.
+
+## Subtitle inputs and workflow policy checkpoint
+
+- Added the pinned `srt==3.5.3` parser dependency instead of a custom SRT parser.
+- `/api/videos/<asset_id>/subtitles` attaches/lists external SRT only under an existing owned video. Original SRT text, exact timestamps, language and a cue digest are retained.
+- `/api/videos/<asset_id>/subtitle-inputs` imports a selected completed job track/revision from the same video. Stale revision selections return 409. The immutable artifact survives edits/deletion of the producing job.
+- Workflow-local snapshot support copies the selected artifact content and records its digest; job creation integration is still pending.
+- `/api/videos/<asset_id>/workflow-plan` validates selected inputs and previews explicit stages/reused inputs/paid stages. Six templates are defined: audio extraction, transcription, transcription+translation, translation, encoding and full workflow.
+- Policy tests prove that translation requires subtitle input, subtitle-free encoding has no paid stages, and selected subtitle/audio reuse skips the corresponding generation stages.
+- Verified: 3 workflow policy tests, 5 subtitle artifact tests, 6 asset API tests, 6 upload-only API tests.
+- These are planning/input APIs, not a completed workflow executor. Worker branching, audio artifact reuse, job snapshots and UI remain required before release. No production deployment or paid requests.
