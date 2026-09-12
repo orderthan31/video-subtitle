@@ -17,9 +17,9 @@
 - [x] Implement result-video promotion with provenance and independent storage.
 - [x] Implement video library, asset detail and workflow creation UI.
 - [x] Integrate existing job detail, editor and job queue with assets.
-- [ ] Validate synthetic media E2E, API permissions, failure/retry and migration.
-- [ ] Validate desktop/mobile UX; document operational and compatibility limits.
-- [ ] Deploy with paid calls disabled, verify existing data and commit/push.
+- [x] Validate synthetic media E2E, API permissions, failure/retry and migration.
+- [x] Validate desktop/mobile UX; document operational and compatibility limits.
+- [x] Deploy with paid calls disabled, verify existing data and commit/push.
 
 Real tests: no Gemini requests. Mark tasks only after verification, not on start.
 
@@ -27,8 +27,8 @@ Implementation audit: the three umbrella implementation tasks above are supporte
 `test_subtitle_artifacts.py`, `test_workflow_execution.py` and
 `test_workflow_media_e2e.py`, all included in the verified 311-test run. Their
 previous unchecked state was stale. This does not close the deployment or final
-acceptance gates. Explicit restart approval is still pending; no further
-production restart attempt has been made.
+acceptance gates by itself. These gates were subsequently closed in the approved
+deployment checkpoint below. Earlier entries describe historical checkpoint state.
 
 ## Foundation checkpoint
 
@@ -112,3 +112,13 @@ production restart attempt has been made.
 - Backed up and SHA-256-verified 593 user files, applied migration for 818/1091/1001.mp4, verified all 590 retained non-manifest artifacts unchanged and all three copied originals identical. See `mvp2-deployment-checkpoint.md` for exact backup and asset IDs.
 - **Deployment is not completed:** the safety reviewer requires explicit user approval for production container replacement. The assistant asked for approval and did not bypass the rejection. API/web remain unchanged and the old worker remains stopped. Rollback image IDs and procedure are documented.
 - Keep the goal active. Remaining: restart approval, guarded deployment verification, deployed UI/data checks and final acceptance audit.
+
+## Approved deployment and final audit
+
+- User explicitly approved the restart. API/web/GPU worker were replaced successfully using the prepared images and preview overlay last; API/web are healthy and the worker is running.
+- Inspected deployed mounts: API and worker retain `data/user-preview/jobs`; web remains on port 5177 and API on 8000. Worker has `PAID_LLM_ENABLED=false`, `NVIDIA_VAD_DEVICE=cuda` and the NVIDIA GPU device reservation.
+- Tailscale Serve still proxies the tailnet-only HTTPS endpoint to port 5177. The homepage returned 200, all four current assets returned valid 32-byte 206 ranges, and all three migrated jobs' translated SRT downloads returned 200. The extra asset is an existing promoted 1091 result and was left untouched.
+- Read-only browser checks against deployed HTTPS at 1440px and 390px showed the real asset library, no horizontal overflow and no page errors. Broader workflow/editor interactions were already covered by the isolated browser suites.
+- Final contract audit maps source ownership/upload-only behavior to asset and upload tests; immutable SRT/audio inputs and six templates to policy/execution/media E2E; promotion/deletion protection to asset/media E2E; retries to execution tests; compatibility to migration and final-subtitle tests. Operations and limitations are recorded in `mvp2-operations.md`.
+- Backend 311 tests and frontend 16 tests passed; production build and both browser suites passed. Real model output quality was not tested: paid calls remain blocked and media E2E uses a local fake provider.
+- Release remains on `feat/mvp2-video-workspace`; no merge into master is authorized or performed.

@@ -1,6 +1,6 @@
 # MVP 2: Video-first workspace
 
-Status: implementation in progress. MVP 1 checkpoint: 1202f51.
+Status: implemented and deployed with paid LLM calls disabled (2026-09-12). MVP 1 checkpoint: 1202f51.
 Development branch: feat/mvp2-video-workspace. Do not merge into master without approval.
 
 ## Product contract
@@ -43,8 +43,8 @@ on the server. Versioned output and attachment records remain under their asset/
 
 Real Gemini network calls default to disabled unless PAID_LLM_ENABLED=true. Tests
 must use injected fake providers and synthetic media in isolated storage, never
-the real preview job directory. The preview worker is stopped until a guarded
-worker is deployed. No paid calls are used as acceptance tests. Do not enable paid
+the real preview job directory. The deployed preview worker is guarded by the
+paid-disabled Compose overlay. No paid calls are used as acceptance tests. Do not enable paid
 mode or silently fall back to a real provider to finish tests.
 
 ## Acceptance

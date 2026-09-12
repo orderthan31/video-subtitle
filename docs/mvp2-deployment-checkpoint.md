@@ -23,9 +23,9 @@ Migration applied successfully to the three completed user jobs:
 
 After migration, all 590 non-job-manifest files still matched the backup. Each copied asset source matched its retained original by SHA-256. All three jobs remained COMPLETED. Only asset-link metadata and updated timestamps were intentionally added to the job manifests.
 
-## Restart approval required
+## Approved replacement
 
-The execution safety reviewer rejected replacing the current production containers without explicit restart approval and a rollback plan. No replacement or restart was executed after that rejection. API/web still run MVP1; the old worker remains stopped. Do not bypass this gate using another launcher or command.
+The execution safety reviewer initially rejected replacement without explicit approval and a rollback plan. Work paused at that gate. The user subsequently explicitly approved the restart, and API/web/GPU worker were successfully replaced on 2026-09-12.
 
 Approved replacement should keep host storage `data/user-preview/jobs`, web port 5177, the existing API port and Tailscale origin. Apply base, VAD, GPU, host-data, VAD-GPU and preview overlays, with the preview overlay last. Wait for health checks and inspect only the paid flag, GPU configuration and mounts, never dump credentials.
 
@@ -41,9 +41,10 @@ On a failed approved rollout, stop the new worker, restore API/web image referen
 
 Inspect the storage and job state before any rollback, particularly if new jobs have been created since rollout. The backup is recovery evidence, not permission to overwrite newer user work.
 
-## Outstanding release gates
+## Completed release checks
 
-- User approval for API/web/worker replacement and brief connection interruption.
-- Approved container replacement, health/mount/paid-lock checks, and Tailscale endpoint verification.
-- Read-only verification of the three migrated assets and existing downloads through the deployed API/UI.
-- Final requirements audit and release checkpoint; master remains unchanged unless separately approved.
+- API/web healthy, worker running; original storage mount and ports retained.
+- Worker environment inspected without exposing secrets: `PAID_LLM_ENABLED=false`, `NVIDIA_VAD_DEVICE=cuda`, NVIDIA GPU reservation and `compute,video,utility` driver capabilities.
+- Tailscale HTTPS homepage returned 200. All four currently registered assets (three migrated originals plus a promoted 1091 result already present during verification) returned 206 for bytes 0-31. All three legacy translated SRT downloads returned 200 (11,872 / 36,002 / 28,542 bytes).
+- Real deployed library rendered at desktop 1440px and mobile 390px with no page errors or horizontal overflow. Verification was read-only and did not create jobs or invoke an LLM.
+- Final requirements audit is recorded in `mvp2-tasks.md`; master remains unchanged unless separately approved. Paid LLM calls remain disabled, so actual transcription/translation requests cannot run until explicitly re-enabled.
