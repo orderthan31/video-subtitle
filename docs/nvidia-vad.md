@@ -123,11 +123,13 @@ References: [Docker GPU support](https://docs.docker.com/desktop/features/gpu/),
 [PyTorch wheel combinations](https://pytorch.org/get-started/previous-versions/),
 [TorchAudio compatibility](https://docs.pytorch.org/audio/main/installation.html).
 
-These optional images have not been built on the development host. Docker and WSL
-are now installed, but a required Windows restart is pending. GPU inference is
-implemented but not hardware-validated here; the
-existing CPU environment is deliberately not replaced. NeMo adds substantial
-installation size and RAM use despite small weights.
+The CPU VAD Docker image has now been built and validated on the development
+host after its Windows restart. Full 818 CPU inference retained the same 266
+intervals and 2,091.7573125 seconds as native Windows CPU. Production now uses
+that container with NVIDIA video encoding (also smoke-tested). The separate
+CUDA VAD image/inference remains unverified; video encoding does not validate
+CUDA VAD. The original CPU environment remains installed for rollback. NeMo
+adds substantial installation size and RAM use despite small weights.
 
 ## Verification
 
@@ -139,6 +141,6 @@ installation size and RAM use despite small weights.
 - No paid transcription/translation was run for this implementation validation.
 - Updated CPU inference produced exactly identical 818 probabilities and intervals.
 - Docker's pinned model downloader was exercised successfully outside Docker.
-- Device selection/failure/fallback/batch bounds are unit-tested without CUDA;
-  a real GPU run and full Docker builds remain unverified.
+- CPU Docker build/inference and NVENC encoding are verified. Device selection,
+  failure/fallback/batch bounds are unit-tested; CUDA VAD hardware tests remain.
 - Browser UI inspection unavailable in this session; no connected browser.

@@ -87,8 +87,34 @@ Compose 프로젝트 이름을 바꾸면 다른 볼륨을 사용한다. 백업�
 
 ## 검증 상태
 
-2026-09-12 개발 PC에 Docker Desktop 4.90.0 (CLI 29.7.2)과 WSL 2.7.13을 설치했다.
-설치 로그에서 WSL2/가상화 기능 활성화 후 Windows 재부팅이 필요하다고 확인됐다.
-아직 재부팅·이미지 빌드·컨테이너 전환은 하지 않았다. 기존 Python/Node 서버와
-Tailscale 연결은 유지하며, 데이터도 기존 폴더에 그대로 보관 중이다.
+2026-09-12 개발 PC에 Docker Desktop 4.90.0 (CLI/Engine 29.7.2)과 WSL 2.7.13을 설치하고
+재부팅 후 API·웹·VAD 워커 이미지를 실제 빌드하여 컨테이너로 전환했다.
+현재는 CPU VAD + NVIDIA NVENC 영상 인코딩이며, CUDA VAD 이미지 검증은 별도다.
+호스트 8080 포트 사용이 거절되어 웹은 기존 5177 포트, API는 8000 포트로 기동했다.
+기존 Tailscale HTTPS 프록시는 5177을 계속 가리키므로 모바일 주소는 변경되지 않았다.
+네이티브 API/워커와 중복 실행하지 않으며, 기존 작업 폴더를 bind mount한다.
+
+개발 PC용 재기동 스크립트는 루트 `.env`와 기존 `data/user-preview/jobs`를 사용한다.
+API 키를 이미지나 스크립트에 넣지 않는다. GPU VAD가 아닌 **CPU VAD + GPU 인코딩** 구성이다.
+
+```powershell
+./scripts/run-docker-preview.ps1 status
+./scripts/run-docker-preview.ps1 build
+./scripts/run-docker-preview.ps1 start -WebOrigin https://YOUR-HOST.YOUR-TAILNET.ts.net
+./scripts/run-docker-preview.ps1 check
+```
+
+재부팅 후에는 Docker Desktop 엔진이 실행돼야 한다. 생성된 컨테이너의 restart 정책은
+`unless-stopped`다. 스크립트는 Windows 관리자 설정이나 Docker 로그인 시 자동 실행 설정을 변경하지 않는다.
+
+전환 검증:
+- 이전 폴더 전체 516파일, 9,810,615,246바이트를 별도 백업하고 SHA-256 전부 일치 확인.
+  백업: `data/migration-backups/pre-docker-20260912-095043` (Git 제외).
+- API/웹 health 정상, 워커 running, 기존 두 완료 작업과 원문/번역 SRT 해시 일치.
+- 기존 MP4 Range 요청 HTTP 206, Tailscale 웹 HTTP 200 및 API health 정상.
+- 격리 컨테이너의 임시 데이터로 업로드, Linux 파일 잠금, READY 종료, VAD 옵션 저장 검증.
+- 합성 1초 영상으로 FFmpeg 자막 번인, CPU HEVC/AAC 및 GPU NVENC 인코딩/디코딩 검증.
+- Docker CPU VAD로 818 전체 오디오 분석: 266구간, 2,091.7573125초.
+  Windows CPU 결과와 구간 목록 일치. 출력: `data/production-validation/818-vad/docker-cpu.json`.
+- 워커 내부 Gemini 모델 정보 조회 HTTP 200. 이번 전환 검증에서 유료 전사·번역은 호출하지 않음.
 저장소에는 Docker CPU 빌드·기동 검증용 GitHub Actions를 포함한다. GPU 검증은 GPU 호스트에서 별도 실행한다.
