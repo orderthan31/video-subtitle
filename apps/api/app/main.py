@@ -10,6 +10,7 @@ from video_service.locking import JobBusyError
 from video_service.repository import JobNotFoundError
 
 from app.api.routes import router
+from app.api.asset_routes import router as asset_router
 from app.api.auth_routes import configured_auth, router as auth_router
 from app.core.config import settings
 from app.services.storage_monitor import monitor_storage
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(router)
+    app.include_router(asset_router)
     app.include_router(auth_router)
     return app
 

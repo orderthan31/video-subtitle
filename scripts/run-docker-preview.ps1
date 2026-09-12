@@ -23,6 +23,8 @@ if ($Action -eq 'start') {
     if ($native) { throw 'Stop native API/worker processes before sharing their job directory with Docker.' }
 }
 $values = @{
+    # Development preview must remain locked even when .env enables paid calls.
+    PAID_LLM_ENABLED = 'false'
     VIDEO_HOST_JOBS_DIR = (Resolve-Path -LiteralPath $StorageRoot).Path
     DOCKER_WEB_PORT = "$WebPort"
     NVIDIA_VAD_DEVICE = $VadDevice
