@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import shutil
+import hashlib
 from pathlib import Path
 import time
 from threading import Event
@@ -115,13 +116,20 @@ class Worker:
                 workflow = record.metadata.get('workflow', {})
                 plan = workflow_plan(workflow.get('template', 'full'),
                     subtitle_input=bool(record.metadata.get('subtitle_input')),
-                    subtitle_mode=record.options.subtitle_mode)
+                    subtitle_mode=record.options.subtitle_mode, audio_input=bool(record.metadata.get('audio_input')))
                 stages = plan['stages']
                 encoder = None
                 if not workflow:
                     with encoding_slot(repo, int(os.getenv('MAX_ENCODING_JOBS', '1')), check):
                         encoder = select_encoder(work, check, video_codec=record.options.video_codec)
                 selected = None
+                selected_audio = None
+                if record.metadata.get('audio_input'):
+                    selected_audio = repo.job_dir(job_id) / 'input/audio.wav'
+                    with selected_audio.open('rb') as stream:
+                        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+                    if digest != record.metadata['audio_input']['sha256']:
+                        raise ValueError('Audio snapshot integrity check failed')
                 if record.metadata.get('subtitle_input'):
                     snapshot = read_json(repo.job_dir(job_id) / 'input/subtitle.json')
                     if cue_digest(snapshot['cues']) != record.metadata['subtitle_input']['sha256']:
@@ -163,9 +171,12 @@ class Worker:
                             write_json_atomic(work / (name + '.json'), [s.to_dict() for s in selected])
                 else:
                     if 'transcribe' in stages or 'extract_audio' in stages:
-                        self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
-                        audio = work / checkpoints.run("extract", lambda: extract_audio(source, work, check).name,
-                            files=("audio.wav",))
+                        if selected_audio is None:
+                            self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
+                            audio = work / checkpoints.run("extract", lambda: extract_audio(source, work, check).name,
+                                files=("audio.wav",))
+                        else:
+                            audio = selected_audio
                         if plan['template'] == 'extract_audio':
                             output = repo.job_dir(job_id) / 'output'
                             shutil.copyfile(audio, output / 'audio.wav')
@@ -278,7 +289,8 @@ class Worker:
                         validate_cues(cues, metadata["duration"])
                     srt = segments_to_srt(cues)
                     (output / f"{stem}.srt").write_text(srt, encoding="utf-8")
-                    (output / f"{stem}.smi").write_text(segments_to_sami(cues, language), encoding="utf-8")
+                    sami_cues = segment_subtitles(cues) if selected is not None else cues
+                    (output / f"{stem}.smi").write_text(segments_to_sami(sami_cues, language), encoding="utf-8")
                     (work / f"{stem}.srt").write_text(srt, encoding="utf-8")
                     result_files.extend([f"{stem}.srt", f"{stem}.smi"])
                 if 'original' in subtitle_sets:

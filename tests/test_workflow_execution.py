@@ -126,6 +126,71 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(self.execute(job_id)[0].status, JobStatus.COMPLETED)
         self.provider.transcribe.assert_not_called()
 
+    def test_transcription_only_subtitles_can_be_edited_and_imported(self):
+        job_id, _ = self.create('transcribe')
+        self.assertEqual(self.execute(job_id)[0].status, JobStatus.COMPLETED)
+        base = '/api/jobs/' + job_id
+        draft = self.client.get(base + '/subtitles')
+        self.assertEqual(draft.status_code, 200, draft.text)
+        self.assertEqual(set(draft.json()['tracks']), {'original'})
+        payload = {'revision': 0, 'tracks': {'original': [{'start': 0.25, 'end': 1.25, 'text': 'Edited speech.'}]}}
+        saved = self.client.put(base + '/subtitles', json=payload)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertIn('Edited speech.', self.client.get(base + '/results/original.srt').text)
+        self.assertEqual(self.client.get(base + '/preview').json()['tracks']['original']['cues'], payload['tracks']['original'])
+        imported = self.client.post(self.base + '/subtitle-inputs', json={
+            'job_id': job_id, 'track': 'original', 'revision': 1})
+        self.assertEqual(imported.status_code, 201, imported.text)
+        self.assertEqual(imported.json()['cues'], payload['tracks']['original'])
+
+    def test_audio_reuse_skips_extraction_and_survives_producing_job_deletion(self):
+        source_id, _ = self.create('extract_audio')
+        self.assertEqual(self.execute(source_id)[0].status, JobStatus.COMPLETED)
+        listing = self.client.get(self.base + '/audio-inputs').json()['audio_inputs']
+        self.assertEqual(listing[0]['job_id'], source_id)
+        payload = {'request_id': str(uuid4()), 'template': 'transcribe', 'audio_job_id': source_id}
+        plan = self.client.post(self.base + '/workflow-plan', json={'template': 'transcribe', 'audio_job_id': source_id})
+        self.assertNotIn('extract_audio', plan.json()['stages'])
+        response = self.client.post(self.base + '/jobs', json=payload)
+        self.assertEqual(response.status_code, 201, response.text)
+        target_id = response.json()['job_id']
+        self.repo.delete_job_dir(source_id)
+        record, extraction, _, encoder, _ = self.execute(target_id)
+        self.assertEqual(record.status, JobStatus.COMPLETED, record.error)
+        extraction.assert_not_called()
+        encoder.assert_not_called()
+        self.provider.transcribe.assert_called_once()
+        self.assertEqual((self.repo.job_dir(target_id) / 'input/audio.wav').read_bytes(), b'audio')
+
+    def test_audio_snapshot_tampering_fails_before_provider(self):
+        source_id, _ = self.create('extract_audio')
+        self.execute(source_id)
+        response = self.client.post(self.base + '/jobs', json={
+            'request_id': str(uuid4()), 'template': 'transcribe', 'audio_job_id': source_id})
+        target_id = response.json()['job_id']
+        (self.repo.job_dir(target_id) / 'input/audio.wav').write_bytes(b'changed')
+        record = self.execute(target_id)[0]
+        self.assertEqual(record.status, JobStatus.FAILED)
+        self.assertIn('integrity', record.error)
+        self.provider.transcribe.assert_not_called()
+
+    def test_imported_multiline_overlapping_srt_stays_editable(self):
+        content = '1\n00:00:00,000 --> 00:00:02,000\nOne\nTwo\nThree\n\n2\n00:00:01,000 --> 00:00:03,000\nOverlap\n'
+        artifact = self.client.post(self.base + '/subtitles', json={
+            'filename': 'input.srt', 'language': 'en', 'content': content}).json()
+        response = self.client.post(self.base + '/jobs', json={'request_id': str(uuid4()),
+            'template': 'encode', 'subtitle_artifact_id': artifact['artifact_id']})
+        job_id = response.json()['job_id']
+        record = self.execute(job_id)[0]
+        self.assertEqual(record.status, JobStatus.COMPLETED, record.error)
+        base = '/api/jobs/' + job_id
+        draft = self.client.get(base + '/subtitles')
+        self.assertEqual(draft.status_code, 200, draft.text)
+        self.assertEqual(draft.json()['tracks']['translated'], artifact['cues'])
+        self.assertTrue(draft.json()['allow_imported_layout'])
+        self.assertEqual(self.client.put(base + '/subtitles', json={
+            'revision': 0, 'tracks': draft.json()['tracks']}).status_code, 200)
+
 
 if __name__ == '__main__':
     unittest.main()

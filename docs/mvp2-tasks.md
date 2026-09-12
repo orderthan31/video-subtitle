@@ -12,7 +12,7 @@
 - [x] Define and test exact workflow stages and input compatibility.
 - [ ] Implement independent workflow templates and checkpoint-safe execution.
 - [x] Connect all six templates to job creation, fixed subtitle inputs and stage-selective worker execution.
-- [ ] Complete extracted-audio reuse and partial-workflow subtitle editor compatibility.
+- [x] Complete extracted-audio reuse and partial-workflow subtitle editor compatibility.
 - [ ] Implement result-video promotion with provenance and independent storage.
 - [ ] Implement video library, asset detail and workflow creation UI.
 - [ ] Integrate existing job detail, editor and job queue with assets.
@@ -64,3 +64,13 @@ Real tests: no Gemini requests. Mark tasks only after verification, not on start
 - Verified API-to-worker tests cover eight template/input combinations, result downloads, request idempotency, source deletion protection, subtitle snapshot independence, video-only encoding and translation-failure retry without repeating transcription.
 - Entire backend test suite: **299 tests passed**, with `PAID_LLM_ENABLED=false`. Workflow media/provider operations are mocked here; actual synthetic FFmpeg E2E remains a release gate.
 - Still pending: audio reuse, video registration validation/migration, editor compatibility for partial tracks, full frontend, synthetic media/browser E2E and paid-disabled deployment. Existing user files and live services were not changed.
+
+## Audio reuse and partial subtitle editing checkpoint
+
+- Workflow creation and preview accept a same-video completed `audio_job_id`. The original extracted WAV is copied into the new job input while the producing job is locked; its digest is verified before processing.
+- Reused audio skips extraction, but runs the selected preprocessing/transcription stages. Deleting the producing job does not affect the snapshot. Audio from other videos/owners or expired outputs is rejected.
+- `/api/videos/<asset_id>/audio-inputs` lists available completed extraction sources without exposing storage paths.
+- Completed subtitle editing derives tracks from actual published results. Transcription-only jobs expose/edit/import the original track without requiring a nonexistent translation. The frontend selects an available track when the default is absent.
+- Imported SRT timing, multiline text and overlapping intervals remain editable and preserved in SRT. The optional SMI output normalizes overlapping cues using the existing subtitle-layout function because SAMI requires a non-overlapping event timeline.
+- Verified: **303 backend tests passed** with paid calls disabled; TypeScript/Vite production build passed. Added coverage for audio reuse after producer deletion, tamper detection, transcription-only edit/import, and multiline/overlapping external SRT edit round-trip.
+- Remaining release work: video probing/migration, source streaming and library/workflow frontend, real synthetic media/browser verification, and guarded deployment. No user media or running services changed.

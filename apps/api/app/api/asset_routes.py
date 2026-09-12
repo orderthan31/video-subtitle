@@ -84,6 +84,7 @@ class WorkflowPlanRequest(BaseModel):
     template: WorkflowTemplate
     subtitle_artifact_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
     subtitle_mode: str = 'burn'
+    audio_job_id: str | None = Field(default=None, pattern=r'^[0-9a-f]{32}$')
 
 
 class JobSubtitleInput(BaseModel):
@@ -158,8 +159,15 @@ def preview_workflow(asset_id: str, payload: WorkflowPlanRequest, request: Reque
         if payload.subtitle_artifact_id:
             SubtitleArtifactRepository(assets).read(asset_id, payload.subtitle_artifact_id,
                                                     owner_id=request.state.owner_id)
+        if payload.audio_job_id:
+            job = routes.repository.read(payload.audio_job_id)
+            if job.metadata.get('owner_id') != request.state.owner_id or job.metadata.get('asset_id') != asset_id:
+                raise HTTPException(status_code=404, detail='Audio job not found for this video.')
+            if (job.status != JobStatus.COMPLETED or job.metadata.get('results_expired_at')
+                    or not (routes.repository.job_dir(job.job_id) / 'work/audio.wav').is_file()):
+                raise HTTPException(status_code=409, detail='Completed extracted audio is unavailable.')
         try:
             return workflow_plan(payload.template, subtitle_input=bool(payload.subtitle_artifact_id),
-                                 subtitle_mode=payload.subtitle_mode)
+                                 subtitle_mode=payload.subtitle_mode, audio_input=bool(payload.audio_job_id))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

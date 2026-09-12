@@ -3,7 +3,7 @@ import {ChevronLeft, ChevronRight, Plus, Save, Trash2, X, Play} from 'lucide-rea
 import {Job, request} from './api';
 
 type Cue = {start:number; end:number; text:string; speaker?:string};
-type Draft = {revision:number; duration:number; languages:Record<string,string>; tracks:Record<string,Cue[]>};
+type Draft = {revision:number; duration:number; languages:Record<string,string>; tracks:Record<string,Cue[]>; allow_imported_layout?:boolean};
 const pageSize = 30;
 export function SubtitleEditor({job,onClose,onRendered,initialTrack='translated'}:{job:Job;onClose:()=>void;onRendered:()=>void;initialTrack?:string}) {
   const completed = job.status==='COMPLETED';
@@ -19,7 +19,7 @@ export function SubtitleEditor({job,onClose,onRendered,initialTrack='translated'
     window.addEventListener('beforeunload',warn);
     return()=>window.removeEventListener('beforeunload',warn);
   },[dirty]);
-  useEffect(()=>{let active=true;request<Draft>(`/jobs/${job.job_id}/subtitles`).then(value=>{if(active)setDraft(value);}).catch(e=>{if(active)setError(String(e.message));});return()=>{active=false;};},[job.job_id]);
+  useEffect(()=>{let active=true;request<Draft>(`/jobs/${job.job_id}/subtitles`).then(value=>{if(active){setDraft(value);setTrack(current=>current in value.tracks?current:Object.keys(value.tracks)[0]);}}).catch(e=>{if(active)setError(String(e.message));});return()=>{active=false;};},[job.job_id]);
   function update(index:number, changes:Partial<Cue>) {
     setDraft(value=>value&&({...value,tracks:{...value.tracks,[track]:value.tracks[track].map((cue,i)=>i===index?{...cue,...changes}:cue)}}));
     setDirty(true);setDiscard(false);setSaved(false);
@@ -46,8 +46,8 @@ export function SubtitleEditor({job,onClose,onRendered,initialTrack='translated'
         for(const cue of cues) {
           if(!Number.isFinite(cue.start)||!Number.isFinite(cue.end)||cue.start<0||cue.end<=cue.start||cue.end>draft.duration+0.05||cue.start<previous-0.001)
             throw new Error('자막 시간이 겹치거나 영상 범위를 벗어났습니다.');
-          if(!cue.text.trim()||cue.text.split('\n').length>2)throw new Error('자막 문구는 비어 있지 않은 최대 두 줄이어야 합니다.');
-          previous=cue.end;
+          if(!cue.text.trim()||(!draft.allow_imported_layout&&cue.text.split('\n').length>2))throw new Error('자막 문구는 비어 있지 않은 최대 두 줄이어야 합니다.');
+          previous=draft.allow_imported_layout?cue.start:cue.end;
         }
       }
       const next=await request<Draft>(`/jobs/${job.job_id}/subtitles`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:draft.revision,tracks:draft.tracks,action})});

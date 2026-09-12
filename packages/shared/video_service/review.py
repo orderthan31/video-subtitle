@@ -11,10 +11,10 @@ def track_languages(options):
         **{f"translated.{language}": language for language in options.additional_languages}}
 
 
-def validate_tracks(tracks, options, duration, *, allow_empty=False):
+def validate_tracks(tracks, options, duration, *, allow_empty=False, languages=None, allow_imported_layout=False):
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError("Invalid subtitle media duration")
-    if set(tracks) != set(track_languages(options)):
+    if set(tracks) != set(track_languages(options) if languages is None else languages):
         raise ValueError("Subtitle tracks do not match job languages")
     for cues in tracks.values():
         if not isinstance(cues, list) or not (0 if allow_empty else 1) <= len(cues) <= 10000:
@@ -28,9 +28,9 @@ def validate_tracks(tracks, options, duration, *, allow_empty=False):
                 raise ValueError("Subtitle outside media timeline")
             if segment.start < previous_end - 0.001:
                 raise ValueError("Subtitle cues overlap")
-            if not segment.text.strip() or len(segment.text) > 1000 or len(segment.text.splitlines()) > 2:
+            if not segment.text.strip() or len(segment.text) > 1000 or (not allow_imported_layout and len(segment.text.splitlines()) > 2):
                 raise ValueError("Subtitle text must contain at most two nonempty lines and 1000 characters")
-            previous_end = segment.end
+            previous_end = segment.start if allow_imported_layout else segment.end
             segments.append(segment)
         segments_to_srt(segments)
 
