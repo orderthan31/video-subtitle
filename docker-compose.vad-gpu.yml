@@ -1,0 +1,18 @@
+# Apply after docker-compose.vad.yml. This does not change video encoding.
+services:
+  worker:
+    build:
+      args:
+        VAD_TORCH_VERSION: ${VAD_TORCH_VERSION:-2.11.0+cu128}
+        VAD_TORCHAUDIO_VERSION: ${VAD_TORCHAUDIO_VERSION:-2.11.0+cu128}
+        VAD_TORCH_INDEX_URL: ${VAD_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
+    environment:
+      NVIDIA_VAD_DEVICE: ${NVIDIA_VAD_DEVICE:-cuda}
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

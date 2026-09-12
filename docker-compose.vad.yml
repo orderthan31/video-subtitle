@@ -6,9 +6,6 @@ services:
         WITH_NVIDIA_VAD: "1"
     environment:
       NVIDIA_VAD_PYTHON: /usr/local/bin/python
-      NVIDIA_VAD_MODEL: /models/vad_multilingual_marblenet.nemo
-    volumes:
-      - type: bind
-        source: ${NVIDIA_VAD_MODEL_DIR:?Set NVIDIA_VAD_MODEL_DIR to the directory containing the NVIDIA model}
-        target: /models
-        read_only: true
+      NVIDIA_VAD_MODEL: /opt/models/vad_multilingual_marblenet.nemo
+      NVIDIA_VAD_DEVICE: ${NVIDIA_VAD_DEVICE:-cpu}
+      NVIDIA_VAD_BATCH_SIZE: ${NVIDIA_VAD_BATCH_SIZE:-64}
