@@ -9,7 +9,7 @@ from video_service.storage import resolve_under
 
 
 class ResultResponse(FileResponse):
-    def __init__(self, repository, job_id, filename):
+    def __init__(self, repository, job_id, filename, *, inline=False):
         if filename not in {"final.mp4", "translated.srt", "original.srt", "translated.smi"} and not re.fullmatch(
                 r"translated\.[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*\.(?:srt|smi)", filename):
             raise HTTPException(status_code=404, detail="결과 파일을 찾을 수 없습니다.")
@@ -21,7 +21,8 @@ class ResultResponse(FileResponse):
         stem = PurePosixPath(original).stem
         stem = re.sub(r'[\x00-\x1f\x7f<>:"/\\|?*]', "_", stem).strip(" .") or "video"
         download_name = f"subtitle_{stem}.mp4" if filename == "final.mp4" else filename
-        super().__init__(path=path, filename=download_name, media_type="text/plain" if filename.endswith(".smi") else None)
+        super().__init__(path=path, filename=download_name, media_type="text/plain" if filename.endswith(".smi") else None,
+            content_disposition_type="inline" if inline else "attachment")
         self.filename = filename
 
     async def __call__(self, scope, receive, send):

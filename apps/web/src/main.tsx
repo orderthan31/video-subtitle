@@ -9,6 +9,7 @@ import {StageProgress} from './StageProgress';
 import {SubtitleEditor} from './SubtitleEditor';
 import {AccountMenu, AuthGate} from './AuthGate';
 import './workspace.css';
+import {JobDetail} from './JobDetail';
 
 const labels: Record<string, string> = {UPLOADING:'업로드 중', QUEUED:'처리 대기', ANALYZING:'영상 분석', EXTRACTING_AUDIO:'오디오 추출', PREPROCESSING_AUDIO:'음성 전처리', TRANSCRIBING:'음성 전사', FILTERING_TRANSCRIPT:'전사 정리', TRANSLATING:'번역', GENERATING_SUBTITLE:'자막 생성', ENCODING:'영상 출력', VALIDATING:'결과 검증', CLEANING:'파일 정리', COMPLETED:'완료', FAILED:'실패', CANCELLED:'취소됨'};
 const terminal = (job: Job) => ['COMPLETED','FAILED','CANCELLED'].includes(job.status);
@@ -34,8 +35,12 @@ function App() {
   const [resumeId,setResumeId] = useState('');
   const input = useRef<HTMLInputElement>(null);
   const uploadDialog = useRef<HTMLDialogElement>(null);
-  const [detailId,setDetailId] = useState('');
-  const detailDialog = useRef<HTMLDialogElement>(null);
+  const [detailId,setDetailId] = useState(()=>location.hash.match(/^#\/jobs\/([a-f0-9]{32})$/)?.[1]||'');
+  useEffect(()=>{
+    const navigate=()=>{setDetailId(location.hash.match(/^#\/jobs\/([a-f0-9]{32})$/)?.[1]||'');window.scrollTo(0,0);};
+    window.addEventListener('hashchange',navigate);
+    return ()=>window.removeEventListener('hashchange',navigate);
+  },[]);
   const [uploads,setUploads] = useState<UploadItem[]>([]);
   const uploadOrder = useRef(new Map<string,string>());
   const [queue] = useState(() => new UploadQueue(async (item, signal, changed) => {
@@ -100,6 +105,7 @@ function App() {
     setFile(null); setResumeId(''); setVideoDescription(''); setFilter('all'); setError('');
     if (input.current) input.current.value = '';
     uploadDialog.current?.close();
+    location.hash='/';
   }
   async function action(job: Job, operation: 'cancel'|'delete') {
     setPending(job.job_id);setError('');
@@ -129,17 +135,16 @@ function App() {
   ].sort((a,b) => b.createdAt.localeCompare(a.createdAt) || b.key.localeCompare(a.key));
   const total = jobs.length+localUploads.filter(item=>!jobs.some(job=>job.job_id===item.jobId)).length;
   const active = jobs.filter(job=>!terminal(job)).length+localUploads.filter(item=>!jobs.some(job=>job.job_id===item.jobId)).length;
-  const detailJob = jobs.find(job=>job.job_id===detailId);
   const filters = [['all','전체 작업',FolderOpen],['active','진행 중',ListVideo],['done','완료',CircleCheck],['history','작업 이력',History]] as const;
   return <>
-    <header><a className="brand" href="/"><Captions size={27}/><span>영상 자막 작업실</span></a><div className="header-session"><span className={'connection '+(online?'online':'')}>{online?'서버 연결됨':'서버 연결 끊김'}</span><AccountMenu/></div></header>
+    <header><a className="brand" href="#/"><Captions size={27}/><span>영상 자막 작업실</span></a><div className="header-session"><span className={'connection '+(online?'online':'')}>{online?'서버 연결됨':'서버 연결 끊김'}</span><AccountMenu/></div></header>
     <aside className="workspace-nav" aria-label="작업 탐색">
       <button className="primary" onClick={()=>uploadDialog.current?.showModal()}><Plus size={20}/>영상 추가</button>
       <p className="nav-heading">내 작업실</p>
-      <nav>{filters.map(([value,label,Icon])=><button key={value} aria-current={filter===value?'page':undefined} onClick={()=>setFilter(value)}><Icon size={20}/><span>{label}</span>{value==='all'&&<small>{total}</small>}{value==='active'&&<small>{active}</small>}</button>)}</nav>
+      <nav>{filters.map(([value,label,Icon])=><button key={value} aria-current={!detailId&&filter===value?'page':undefined} onClick={()=>{setFilter(value);location.hash='/';}}><Icon size={20}/><span>{label}</span>{value==='all'&&<small>{total}</small>}{value==='active'&&<small>{active}</small>}</button>)}</nav>
       <div className="nav-footer"><Captions size={18}/><span>영상 자막 작업실</span></div>
     </aside>
-    <main>
+    <main className={detailId?'workspace-main detail-active':'workspace-main'}>
       <div className="page-title"><div><p className="eyebrow">내 작업실</p><h1>{filters.find(([value])=>value===filter)?.[1]}</h1></div><span className="active-count"><span className="activity-dot"/>{active}개 진행 중</span></div>
       {error && <div className="alert" role="alert"><span>{error}</span><button className="icon" title="알림 닫기" onClick={()=>setError('')}><X size={18}/></button></div>}
       <dialog ref={uploadDialog} className="upload-dialog" aria-labelledby="upload-title">
@@ -183,7 +188,7 @@ function App() {
             {item.jobId&&item.state!=='done'&&<button className="icon danger" title="작업 취소" disabled={!!pending} onClick={()=>{queue.pause(item.key);void action({job_id:item.jobId!} as Job,'cancel');}}><X size={18}/></button>}
             {!item.started&&<button className="icon danger" title="대기 업로드 제거" onClick={()=>queue.remove(item.key)}><X size={18}/></button>}
           </div>
-        </article>:job?<article key={entry.key} className="job-row"><div className={'video-icon '+(job.status==='COMPLETED'?'finished':'')}>{job.status==='COMPLETED'?<Check/>:<FileVideo/>}</div><div className="job-description"><h3><button className="job-title" onClick={()=>{setDetailId(job.job_id);detailDialog.current?.showModal();}}>{job.original_filename}</button></h3><p>{bytes(job.expected_size)} <span>·</span> {languageName(job.target_language)} <span>·</span> {new Date(job.created_at).toLocaleString('ko-KR')}</p>{job.error&&<p className="job-error">{job.error}</p>}{job.status==='UPLOADING'&&<progress aria-label={`${job.original_filename} 업로드 진행률`} max={job.expected_size} value={job.uploaded_bytes}/>}</div><span className={'status '+job.status.toLowerCase()}><Clock size={14}/>{job.metadata.cancel_requested&&!terminal(job)?'취소 중':labels[job.status]||job.status}</span><div className="actions">
+        </article>:job?<article key={entry.key} className="job-row" onClick={e=>{if(!(e.target as HTMLElement).closest('a,button,summary,details'))location.hash=`/jobs/${job.job_id}`;}}><div className={'video-icon '+(job.status==='COMPLETED'?'finished':'')}>{job.status==='COMPLETED'?<Check/>:<FileVideo/>}</div><div className="job-description"><h3><a className="job-title" href={`#/jobs/${job.job_id}`}>{job.original_filename}</a></h3><p>{bytes(job.expected_size)} <span>·</span> {languageName(job.target_language)} <span>·</span> {new Date(job.created_at).toLocaleString('ko-KR')}</p>{job.error&&<p className="job-error">{job.error}</p>}{job.status==='UPLOADING'&&<progress aria-label={`${job.original_filename} 업로드 진행률`} max={job.expected_size} value={job.uploaded_bytes}/>}</div><span className={'status '+job.status.toLowerCase()}><Clock size={14}/>{job.metadata.cancel_requested&&!terminal(job)?'취소 중':labels[job.status]||job.status}</span><div className="actions">
           {job.status==='COMPLETED'&&job.metadata.results_expired_at&&<span className="status" title={new Date(job.metadata.results_expired_at).toLocaleString('ko-KR')}>결과 만료</span>}
           {job.metadata.upload_expired_at&&<span className="status">업로드 만료</span>}
           {job.status==='COMPLETED'&&!job.metadata.results_expired_at&&<><a className="download" href={`${base}/jobs/${job.job_id}/results/final.mp4`}><Download size={16}/>MP4</a><a className="download" href={`${base}/jobs/${job.job_id}/results/translated.srt`}><Download size={16}/>번역 SRT</a>{job.metadata.result_files?.includes('original.srt')&&<a className="download" href={`${base}/jobs/${job.job_id}/results/original.srt`}><Download size={16}/>원문 SRT</a>}</>}
@@ -197,16 +202,8 @@ function App() {
         </div><StageProgress job={job}/></article>:null;})}</div>
       </section>
     </main>
-    <button className="primary mobile-add" onClick={()=>uploadDialog.current?.showModal()}><Plus size={20}/>영상 추가</button>
-    <dialog ref={detailDialog} className="detail-dialog" aria-labelledby="detail-title">
-      <div className="dialog-heading"><h2 id="detail-title">작업 상세</h2><button className="icon" title="작업 상세 닫기" onClick={()=>detailDialog.current?.close()}><X size={22}/></button></div>
-      {detailJob&&<><div className="detail-file"><div className="video-icon"><FileVideo size={28}/></div><div><h3>{detailJob.original_filename}</h3><p>{bytes(detailJob.expected_size)} · {languageName(detailJob.target_language)}</p></div></div>
-        <div className={'status '+detailJob.status.toLowerCase()}>{labels[detailJob.status]||detailJob.status}</div>
-        <StageProgress job={detailJob}/>
-        {detailJob.error&&<p className="alert">{detailJob.error}</p>}
-        <dl className="job-facts"><div><dt>등록 일시</dt><dd>{new Date(detailJob.created_at).toLocaleString('ko-KR')}</dd></div><div><dt>원본 언어</dt><dd>{detailJob.source_language==='auto'?'자동 감지':languageName(detailJob.source_language)}</dd></div><div><dt>영상 설명</dt><dd>{detailJob.video_description||'없음'}</dd></div><div><dt>음성 감지</dt><dd>{detailJob.vad_mode==='nvidia'?'NVIDIA VAD':'사용 안 함'}</dd></div></dl>
-      </>}
-    </dialog>
+    <button hidden={!!detailId} className="primary mobile-add" onClick={()=>uploadDialog.current?.showModal()}><Plus size={20}/>영상 추가</button>
+    {detailId&&<JobDetail key={detailId} id={detailId} labels={labels}/>}
     {reviewJob&&<SubtitleEditor job={reviewJob} onClose={()=>setReviewJob(null)} onRendered={()=>void refresh()}/>}
     {confirm&&<div className="overlay"><div role="dialog" aria-modal="true" aria-labelledby="delete-title" className="dialog"><h2 id="delete-title">작업을 삭제할까요?</h2><p>{confirm.original_filename}</p><p>작업 기록과 남아 있는 영상·자막 파일이 함께 삭제됩니다.</p><div><button autoFocus onClick={()=>setConfirm(null)}>돌아가기</button><button className="destructive" disabled={!!pending} onClick={()=>void action(confirm,'delete')}>삭제</button></div></div></div>}
   </>;

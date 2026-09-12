@@ -9,11 +9,13 @@ try {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', error=>errors.push(error.message));
-  const job = {job_id:'design-check',status:'TRANSCRIBING',original_filename:'long_video_filename_for_mobile_layout_818.mp4',expected_size:123456,uploaded_bytes:123456,target_language:'ko',source_language:'auto',quality_profile:'balanced',created_at:'2026-09-12T00:00:00Z',completed_at:null,error:null,metadata:{transcription_progress:{total:80,completed:30,in_flight:3,retrying:0,failed:0,draining:false}}};
+  const job = {job_id:'a'.repeat(32),status:'TRANSCRIBING',original_filename:'long_video_filename_for_mobile_layout_818.mp4',expected_size:123456,uploaded_bytes:123456,target_language:'ko',source_language:'auto',quality_profile:'balanced',created_at:'2026-09-12T00:00:00Z',completed_at:null,error:null,metadata:{transcription_progress:{total:80,completed:30,in_flight:3,retrying:0,failed:0,draining:false}}};
   await page.route('**/api/**', route=>{
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/auth/session')) return route.fulfill({json:{enabled:false,user:null}});
     if (path.endsWith('/jobs')) return route.fulfill({json:{jobs:[job]}});
+    if (path.endsWith('/'+job.job_id)) return route.fulfill({json:job});
+    if (path.endsWith('/preview')) return route.fulfill({json:{video_available:false,expired:false,tracks:{original:{available:false,partial:false,cues:[]},translated:{available:false,partial:false,cues:[]}}}});
     return route.fulfill({status:503,json:{detail:'Browser test: writes disabled'}});
   });
   await page.goto(process.env.WEB_URL || 'http://127.0.0.1:5177');
@@ -29,8 +31,9 @@ try {
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('dialog[open]').count(),0);
     await page.locator('.job-title').click();
-    assert.equal(await page.getByRole('heading',{name:'작업 상세'}).isVisible(),true);
-    await page.getByTitle('작업 상세 닫기').click();
+    await page.locator('.job-detail h1').filter({hasText:job.original_filename}).waitFor();
+    assert.equal(await page.getByRole('tab',{name:'전사록',exact:true}).isVisible(),true);
+    await page.getByTitle('작업 목록으로').click();
     await page.getByRole('tab',{name:'완료',exact:true}).click();
     assert.equal(await page.locator('.job-row').count(),0);
     await page.getByRole('tab',{name:'전체',exact:true}).click();

@@ -22,6 +22,7 @@ from app.schemas.jobs import (
 from app.services.storage_guard import StorageGuard, StorageLimitError
 from app.services.upload_service import UploadConflictError, UploadService
 from app.services.result_response import ResultResponse
+from app.services.job_preview import read_preview
 from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
@@ -234,6 +235,18 @@ def get_subtitle_draft(job_id: str):
         if record.status != JobStatus.AWAITING_REVIEW:
             raise HTTPException(status_code=409, detail="자막 검토 대기 상태가 아닙니다.")
         return read_draft(repository, record)
+
+
+@router.get("/jobs/{job_id}/preview")
+def get_job_preview(job_id: str):
+    with job_lock(repository, job_id):
+        record = _read_job_or_404(job_id)
+        return read_preview(repository, record)
+
+
+@router.get("/jobs/{job_id}/stream")
+def stream_job_video(job_id: str):
+    return ResultResponse(repository, job_id, "final.mp4", inline=True)
 
 
 @router.put("/jobs/{job_id}/subtitles")
