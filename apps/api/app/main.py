@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+import anyio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,10 +12,21 @@ from video_service.repository import JobNotFoundError
 from app.api.routes import router
 from app.api.auth_routes import configured_auth, router as auth_router
 from app.core.config import settings
+from app.services.storage_monitor import monitor_storage
+
+
+@asynccontextmanager
+async def lifespan(app):
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(monitor_storage, app, settings)
+        try:
+            yield
+        finally:
+            tasks.cancel_scope.cancel()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Video Subtitle API", version="0.1.0")
+    app = FastAPI(title="Video Subtitle API", version="0.1.0", lifespan=lifespan)
     app.state.auth = configured_auth(settings.storage_root)
     app.state.cors_origins = settings.cors_origins
     @app.middleware("http")

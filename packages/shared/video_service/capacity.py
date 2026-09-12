@@ -23,6 +23,11 @@ def used_bytes(root: Path) -> int:
 def assert_capacity(root: Path, quota: int, minimum_free: int, additional=0):
     if used_bytes(root) + additional > quota:
         raise StorageLimitError("Service storage quota exceeded")
+    assert_free_space(root, minimum_free, additional)
+
+
+def assert_free_space(root: Path, minimum_free: int, additional=0):
+    """Check physical headroom without enumerating files on the upload path."""
     if shutil.disk_usage(root).free - additional < minimum_free:
         raise StorageLimitError("Insufficient free disk space")
 

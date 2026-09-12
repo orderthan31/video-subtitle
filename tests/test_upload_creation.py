@@ -31,6 +31,7 @@ class UploadCreationTests(unittest.TestCase):
     def test_replay_preserves_job_and_checks_capacity_only_once(self):
         first = self.client.post("/api/uploads", json=self.payload)
         job_id = first.json()["job_id"]
+        self.assertEqual(self.repo.read(job_id).metadata['reserved_bytes'], 24)
         self.repo.update_upload_progress(job_id, 3)
         self.repo.update_status(job_id, JobStatus.QUEUED)
         replay = self.client.post("/api/uploads", json=self.payload)

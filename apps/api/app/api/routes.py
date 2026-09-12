@@ -25,7 +25,7 @@ from app.services.result_response import ResultResponse
 from video_service.models import JobStatus, TERMINAL_STATUSES
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository, JobNotFoundError
-from video_service.capacity import assert_capacity, remaining_reservations, used_bytes
+from video_service.capacity import assert_capacity, assert_free_space, remaining_reservations, used_bytes
 from video_service.review import read_draft, write_draft
 
 def authorize_job_request(request: Request):
@@ -42,8 +42,8 @@ def authorize_job_request(request: Request):
 
 router = APIRouter(prefix="/api", dependencies=[Depends(authorize_job_request)])
 repository = FilesystemJobRepository(settings.storage_root)
-upload_service = UploadService(repository, partial(assert_capacity, settings.storage_root,
-    settings.service_quota_bytes, settings.min_free_space_bytes))
+upload_service = UploadService(repository, partial(assert_free_space, settings.storage_root,
+    settings.min_free_space_bytes))
 storage_guard = StorageGuard(
     root=settings.storage_root,
     max_upload_bytes=settings.max_upload_bytes,
@@ -98,7 +98,8 @@ def create_upload(payload: UploadCreateRequest, request: Request) -> UploadCreat
                     review_subtitles=payload.review_subtitles,
                     video_description=payload.video_description,
                     vad_mode=payload.vad_mode,
-                    metadata={"upload_request_id": request_id, "owner_id": request.state.owner_id},
+                    metadata={"upload_request_id": request_id, "owner_id": request.state.owner_id,
+                        "reserved_bytes": payload.size * 4},
                 )
     except StorageLimitError as exc:
         raise HTTPException(status_code=status.HTTP_507_INSUFFICIENT_STORAGE, detail=str(exc)) from exc

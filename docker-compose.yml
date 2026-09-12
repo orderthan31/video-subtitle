@@ -16,6 +16,7 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       AUTH_SESSION_HOURS: ${AUTH_SESSION_HOURS:-8}
+      STORAGE_AUDIT_INTERVAL_SECONDS: ${STORAGE_AUDIT_INTERVAL_SECONDS:-300}
       WEB_CORS_ORIGINS: ${WEB_CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
     volumes:
       - jobs:/data/video-jobs

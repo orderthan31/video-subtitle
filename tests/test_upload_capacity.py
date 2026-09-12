@@ -6,11 +6,12 @@ from unittest.mock import patch
 from uuid import uuid4
 import asyncio
 import time
+from functools import partial
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "packages/shared"), str(ROOT / "apps/api")]
 from app.services.upload_service import UploadService
-from video_service.capacity import StorageLimitError
+from video_service.capacity import StorageLimitError, assert_free_space
 from video_service.models import QualityProfile
 from video_service.repository import FilesystemJobRepository
 
@@ -88,6 +89,25 @@ class UploadCapacityTests(unittest.IsolatedAsyncioTestCase):
             response = TestClient(app).put(f"/api/uploads/{self.job.job_id}/chunks?offset=0", content=b"test")
         self.assertEqual(response.status_code, 507)
         self.assertEqual(self.repo.source_path(self.job).stat().st_size, 0)
+
+    async def test_upload_checks_free_space_without_scanning_any_folder(self):
+        from app.api import routes
+        self.assertIs(routes.upload_service.capacity_check.func, assert_free_space)
+        service = UploadService(self.repo, partial(assert_free_space, self.root, 10))
+        with patch('video_service.capacity.used_bytes', side_effect=AssertionError('No full scan during upload')):
+            with patch('shutil.disk_usage', return_value=shutil._ntuple_diskusage(100, 0, 100)):
+                self.assertEqual(await service.append_chunk(job_id=self.job.job_id, expected_offset=0, body=body()), 11)
+
+    async def test_low_space_preserves_confirmed_bytes(self):
+        source = self.repo.source_path(self.job)
+        source.write_bytes(b'previous')
+        self.repo.update_upload_progress(self.job.job_id, 8)
+        service = UploadService(self.repo, partial(assert_free_space, self.root, 10))
+        with patch('shutil.disk_usage', return_value=shutil._ntuple_diskusage(100, 80, 20)):
+            with self.assertRaises(StorageLimitError):
+                await service.append_chunk(job_id=self.job.job_id, expected_offset=8, body=body())
+        self.assertEqual(source.read_bytes(), b'previous')
+        self.assertEqual(self.repo.read(self.job.job_id).uploaded_bytes, 8)
 
 
 if __name__ == '__main__':

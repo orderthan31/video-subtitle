@@ -28,9 +28,12 @@ class Settings:
     max_upload_bytes: int = _int_env("MAX_UPLOAD_BYTES", 10 * 1024 * 1024 * 1024)
     service_quota_bytes: int = _int_env("VIDEO_SERVICE_QUOTA_BYTES", 300 * 1024 * 1024 * 1024)
     min_free_space_bytes: int = _int_env("MIN_FREE_SPACE_BYTES", 50 * 1024 * 1024 * 1024)
+    storage_audit_interval_seconds: int = _int_env("STORAGE_AUDIT_INTERVAL_SECONDS", 300)
     cors_origins: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
+        if self.storage_audit_interval_seconds < 1:
+            raise ValueError("STORAGE_AUDIT_INTERVAL_SECONDS must be positive")
         if self.cors_origins is None:
             object.__setattr__(
                 self,
