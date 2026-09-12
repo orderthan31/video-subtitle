@@ -4,6 +4,8 @@ import sys
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
+import asyncio
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "packages/shared"), str(ROOT / "apps/api")]
@@ -37,11 +39,44 @@ class UploadCapacityTests(unittest.IsolatedAsyncioTestCase):
             if len(seen) == 2:
                 raise StorageLimitError("full")
         service = UploadService(self.repo, check)
-        with self.assertRaises(StorageLimitError):
-            await service.append_chunk(job_id=self.job.job_id, expected_offset=8, body=body())
+        with patch('app.services.upload_service.CAPACITY_BATCH_BYTES', 6):
+            with self.assertRaises(StorageLimitError):
+                await service.append_chunk(job_id=self.job.job_id, expected_offset=8, body=body())
         self.assertEqual(path.read_bytes(), b"previous")
         self.assertEqual(self.repo.read(self.job.job_id).uploaded_bytes, 8)
         self.assertEqual(seen, [(8, 5), (13, 6)])
+
+    async def test_small_packets_share_scan_without_blocking_event_loop(self):
+        seen = []
+        ticks = []
+        def check(size):
+            seen.append(size)
+            time.sleep(0.1)
+        async def heartbeat():
+            await asyncio.sleep(0.02)
+            ticks.append(True)
+        async def packets():
+            for _ in range(20):
+                yield b'x'
+        pulse = asyncio.create_task(heartbeat())
+        uploaded = await UploadService(self.repo, check).append_chunk(
+            job_id=self.job.job_id, expected_offset=0, body=packets())
+        self.assertTrue(ticks, 'Capacity scan blocked the API event loop')
+        await pulse
+        self.assertEqual(seen, [20])
+        self.assertEqual(uploaded, 20)
+        self.assertEqual(self.repo.source_path(self.job).read_bytes(), b'x' * 20)
+
+    async def test_disconnected_body_rolls_back_flushed_batches(self):
+        async def disconnected():
+            yield b'abcdef'
+            raise ConnectionError('disconnected')
+        with patch('app.services.upload_service.CAPACITY_BATCH_BYTES', 3):
+            with self.assertRaises(ConnectionError):
+                await UploadService(self.repo).append_chunk(
+                    job_id=self.job.job_id, expected_offset=0, body=disconnected())
+        self.assertEqual(self.repo.source_path(self.job).stat().st_size, 0)
+        self.assertEqual(self.repo.read(self.job.job_id).uploaded_bytes, 0)
 
     def test_api_returns_507_on_capacity_failure(self):
         from fastapi.testclient import TestClient

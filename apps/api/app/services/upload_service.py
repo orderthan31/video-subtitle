@@ -3,11 +3,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 import errno
 from typing import Callable
+from starlette.concurrency import run_in_threadpool
 
 from video_service.models import JobStatus
 from video_service.locking import job_lock
 from video_service.repository import FilesystemJobRepository
 from video_service.capacity import StorageLimitError
+
+CAPACITY_BATCH_BYTES = 4 * 1024 * 1024
 
 
 class UploadConflictError(ValueError):
@@ -44,6 +47,16 @@ class UploadService:
 
         uploaded = current_size
         with source_path.open("ab") as file:
+            buffer = bytearray()
+
+            def flush_batch():
+                file.flush()
+                if self.capacity_check:
+                    self.capacity_check(len(buffer))
+                file.write(buffer)
+                file.flush()
+                buffer.clear()
+
             try:
                 async for chunk in body:
                     if not chunk:
@@ -51,11 +64,16 @@ class UploadService:
                     uploaded += len(chunk)
                     if uploaded > record.expected_size:
                         raise ValueError("업로드 크기가 선언된 파일 크기를 초과했습니다.")
-                    if self.capacity_check:
-                        file.flush()
-                        self.capacity_check(len(chunk))
-                    file.write(chunk)
-                file.flush()
+                    # Bound memory and scan storage once per batch, not per network packet.
+                    for offset in range(0, len(chunk), CAPACITY_BATCH_BYTES):
+                        view = memoryview(chunk)[offset:offset + CAPACITY_BATCH_BYTES]
+                        if len(buffer) + len(view) > CAPACITY_BATCH_BYTES:
+                            await run_in_threadpool(flush_batch)
+                        buffer.extend(view)
+                        if len(buffer) == CAPACITY_BATCH_BYTES:
+                            await run_in_threadpool(flush_batch)
+                if buffer:
+                    await run_in_threadpool(flush_batch)
             except OSError as exc:
                 file.truncate(current_size)
                 if exc.errno in {errno.ENOSPC, errno.EDQUOT}:
