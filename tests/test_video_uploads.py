@@ -22,6 +22,7 @@ class VideoUploadTests(unittest.TestCase):
         self.repo = FilesystemJobRepository(self.root)
         self.addCleanup(shutil.rmtree, self.root)
         for target, name, value in [(routes, 'repository', self.repo),
+                (video_upload_routes, 'inspect_video', lambda _: {'duration': 60, 'has_audio': True}),
                 (video_upload_routes, 'assert_capacity', lambda *a: None),
                 (video_upload_routes, 'assert_free_space', lambda *a: None)]:
             p = patch.object(target, name, value)

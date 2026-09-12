@@ -12,6 +12,8 @@ from video_service.artifacts import SubtitleArtifactRepository
 from video_service.workflows import WorkflowTemplate, workflow_plan
 from video_service.models import JobStatus
 from app.services.final_subtitles import read_final_draft
+from app.services.asset_response import AssetVideoResponse
+from video_service.video_probe import inspect_video
 
 
 router = APIRouter(prefix='/api', dependencies=[Depends(routes.authorize_job_request)])
@@ -29,6 +31,8 @@ def asset_errors():
         raise HTTPException(status_code=507, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=507, detail='Video registration could not be persisted.') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def reserve_copy(size):
@@ -56,14 +60,20 @@ def get_video(asset_id: str, request: Request):
 def register_source(job_id: str, request: Request):
     with asset_errors(), job_lock(routes.repository, '0' * 32):
         return VideoAssetRepository(routes.repository).register_upload(job_id,
-            owner_id=request.state.owner_id, before_copy=reserve_copy)
+            owner_id=request.state.owner_id, before_copy=reserve_copy, inspect_source=inspect_video)
 
 
 @router.post('/jobs/{job_id}/promote-video')
 def promote_video(job_id: str, request: Request):
     with asset_errors(), job_lock(routes.repository, '0' * 32):
         return VideoAssetRepository(routes.repository).promote_result(job_id,
-            owner_id=request.state.owner_id, before_copy=reserve_copy)
+            owner_id=request.state.owner_id, before_copy=reserve_copy, inspect_source=inspect_video)
+
+
+@router.get('/videos/{asset_id}/stream')
+def stream_video(asset_id: str, request: Request):
+    with asset_errors():
+        return AssetVideoResponse(VideoAssetRepository(routes.repository), asset_id, request.state.owner_id)
 
 
 @router.delete('/videos/{asset_id}', status_code=204)

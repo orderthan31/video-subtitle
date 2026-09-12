@@ -6,7 +6,8 @@
 - [x] Add isolated asset storage, idempotent source registration and result promotion primitives/API.
 - [x] Separate video asset registry and upload-only backend lifecycle.
 - [ ] Connect upload-only frontend and validate video metadata on registration.
-- [ ] Implement idempotent legacy migration and source/reference protection.
+- [x] Implement idempotent legacy migration and source/reference protection.
+- [x] Validate real video registration and lease-protected source range streaming.
 - [ ] Implement asset-scoped SRT attachments and artifact input snapshots.
 - [x] Add SRT attachment/version import APIs, immutable artifact storage and snapshot primitives.
 - [x] Define and test exact workflow stages and input compatibility.
@@ -74,3 +75,12 @@ Real tests: no Gemini requests. Mark tasks only after verification, not on start
 - Imported SRT timing, multiline text and overlapping intervals remain editable and preserved in SRT. The optional SMI output normalizes overlapping cues using the existing subtitle-layout function because SAMI requires a non-overlapping event timeline.
 - Verified: **303 backend tests passed** with paid calls disabled; TypeScript/Vite production build passed. Added coverage for audio reuse after producer deletion, tamper detection, transcription-only edit/import, and multiline/overlapping external SRT edit round-trip.
 - Remaining release work: video probing/migration, source streaming and library/workflow frontend, real synthetic media/browser verification, and guarded deployment. No user media or running services changed.
+
+## Video registration and migration checkpoint
+
+- Registration/promotion now invoke FFprobe before publishing an asset. Invalid media, audio-only files and attached cover art are not accepted as a source video. Basic duration/dimensions/codec/audio metadata is stored without audio extraction or model calls.
+- `/api/videos/<asset_id>/stream` supports byte ranges and holds an asset reader lease through the response. Deletion is rejected while a reader is active.
+- `scripts/migrate-video-assets.py` defaults to reporting candidates. `--apply` copies complete legacy originals and writes asset links without changing job status or removing original/result files. Repeated runs reuse links; incomplete/active jobs are skipped and corrupt manifests are reported.
+- The migration script is included in Docker images. Operational instructions are in `mvp2-operations.md`.
+- Verified: **309 backend tests passed** with paid calls disabled, including actual FFmpeg-generated MP4 upload, FFprobe metadata validation and HTTP range streaming. Migration repeatability/preservation, invalid-video rejection and reader/deletion conflicts are covered.
+- Actual user-data migration and Docker deployment have not run yet. Frontend/library/workflow UI and full media/browser release verification remain pending.

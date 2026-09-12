@@ -26,6 +26,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.object(routes, 'repository', self.repo))
+        self.stack.enter_context(patch.object(asset_routes, 'inspect_video', lambda _: {'duration': 60, 'has_audio': True}))
         self.stack.enter_context(patch.object(asset_routes, 'reserve_copy', lambda _: None))
         self.stack.enter_context(patch.object(workflow_routes, 'assert_capacity', lambda *a: None))
         self.stack.enter_context(patch.dict('os.environ', {'PAID_LLM_ENABLED': 'false',

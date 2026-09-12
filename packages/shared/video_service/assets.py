@@ -24,6 +24,10 @@ class VideoAssetRepository:
     def __init__(self, jobs):
         self.jobs = jobs
         self.root = ensure_dir(jobs.storage_root / '.assets')
+        self.storage_root = self.root
+
+    def job_dir(self, asset_id):
+        return self.directory(asset_id)
 
     @contextmanager
     def lock(self):
@@ -58,11 +62,12 @@ class VideoAssetRepository:
         return path
 
     def _publish_copy(self, source: Path, *, asset_id: str, filename: str,
-                      owner_id, provenance: dict, before_copy, created_at=None) -> dict:
+                      owner_id, provenance: dict, before_copy, created_at=None, inspect_source=None) -> dict:
         """Caller holds registry and source execution locks; manifest publishes last."""
         manifest = self.directory(asset_id) / 'asset.json'
         if manifest.exists():
             return self.read(asset_id, owner_id=owner_id)
+        media = inspect_source(source) if inspect_source else None
         size = source.stat().st_size
         before_copy(size + 4096)
         directory = ensure_dir(self.directory(asset_id))
@@ -79,12 +84,14 @@ class VideoAssetRepository:
                 'size_bytes': size, 'status': 'ready',
                 'created_at': created_at or utc_now_iso(), 'provenance': provenance,
             }
+            if media is not None:
+                record['media'] = media
             write_json_atomic(manifest, record)
             return record
         finally:
             temporary.unlink(missing_ok=True)
 
-    def register_upload(self, job_id: str, *, owner_id=None, before_copy, upload_repository=None) -> dict:
+    def register_upload(self, job_id: str, *, owner_id=None, before_copy, upload_repository=None, inspect_source=None) -> dict:
         """Also migrates legacy jobs without changing their status or artifacts."""
         jobs = upload_repository or self.jobs
         with job_lock(jobs, job_id, 'execution'), job_lock(jobs, job_id), self.lock():
@@ -103,14 +110,14 @@ class VideoAssetRepository:
             record = self._publish_copy(source, asset_id=asset_id,
                 filename=job.original_filename, owner_id=owner_id,
                 provenance={'kind': 'upload', 'upload_id': job_id},
-                before_copy=before_copy, created_at=job.created_at)
+                before_copy=before_copy, created_at=job.created_at, inspect_source=inspect_source)
             job.metadata['asset_id'] = asset_id
             if upload_repository is not None:
                 job.metadata['reserved_bytes'] = 0
             jobs.save(job)
             return record
 
-    def promote_result(self, job_id: str, *, owner_id=None, before_copy) -> dict:
+    def promote_result(self, job_id: str, *, owner_id=None, before_copy, inspect_source=None) -> dict:
         with job_lock(self.jobs, job_id, 'execution'), job_lock(self.jobs, job_id), self.lock():
             job = self.jobs.read(job_id)
             if job.metadata.get('owner_id') != owner_id:
@@ -127,10 +134,10 @@ class VideoAssetRepository:
                 filename=Path(job.original_filename).stem + '_processed.mp4', owner_id=owner_id,
                 provenance={'kind': 'result', 'job_id': job_id,
                             'parent_asset_id': job.metadata.get('asset_id'), 'result': 'final.mp4'},
-                before_copy=before_copy)
+                before_copy=before_copy, inspect_source=inspect_source)
 
     def delete(self, asset_id: str, *, owner_id=None) -> None:
-        with self.lock():
+        with self.lock(), job_lock(self, asset_id, 'execution'):
             asset = self.read(asset_id, owner_id=owner_id)
             # Do not use jobs.list(): it skips invalid manifests and could miss a reference.
             for path in self.jobs.storage_root.glob('*/job.json'):

@@ -14,6 +14,7 @@ from video_service.capacity import StorageLimitError, assert_capacity, assert_fr
 from video_service.locking import job_lock
 from video_service.models import JobStatus, QualityProfile
 from video_service.repository import FilesystemJobRepository
+from video_service.video_probe import inspect_video
 
 
 router = APIRouter(prefix='/api/video-uploads', dependencies=[Depends(routes.authorize_job_request)])
@@ -149,5 +150,5 @@ def complete_upload(upload_id: str, request: Request):
             assert_capacity(routes.repository.storage_root, settings.service_quota_bytes,
                 settings.min_free_space_bytes, remaining_reservations(routes.repository, {upload_id: 0}) + size)
         asset = VideoAssetRepository(routes.repository).register_upload(upload_id,
-            owner_id=request.state.owner_id, before_copy=reserve_copy, upload_repository=repo)
+            owner_id=request.state.owner_id, before_copy=reserve_copy, upload_repository=repo, inspect_source=inspect_video)
         return {'status': 'ready', 'video': asset}

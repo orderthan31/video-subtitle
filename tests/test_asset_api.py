@@ -27,6 +27,7 @@ class AssetApiTests(unittest.TestCase):
         (self.repo.job_dir(self.job.job_id) / 'output/final.mp4').write_bytes(b'encoded')
         self.repo.update_status(self.job.job_id, JobStatus.COMPLETED)
         for target, attribute, value in [(routes, 'repository', self.repo),
+                                         (asset_routes, 'inspect_video', lambda _: {'duration': 60, 'has_audio': True}),
                                          (asset_routes, 'reserve_copy', lambda _: None)]:
             patcher = patch.object(target, attribute, value)
             patcher.start()
