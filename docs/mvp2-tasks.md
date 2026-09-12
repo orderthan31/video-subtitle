@@ -5,7 +5,7 @@
 - [x] Add fail-closed paid LLM guard and tests; persist Docker preview lock.
 - [x] Add isolated asset storage, idempotent source registration and result promotion primitives/API.
 - [x] Separate video asset registry and upload-only backend lifecycle.
-- [ ] Connect upload-only frontend and validate video metadata on registration.
+- [x] Connect upload-only frontend and validate video metadata on registration.
 - [x] Implement idempotent legacy migration and source/reference protection.
 - [x] Validate real video registration and lease-protected source range streaming.
 - [ ] Implement asset-scoped SRT attachments and artifact input snapshots.
@@ -15,8 +15,8 @@
 - [x] Connect all six templates to job creation, fixed subtitle inputs and stage-selective worker execution.
 - [x] Complete extracted-audio reuse and partial-workflow subtitle editor compatibility.
 - [ ] Implement result-video promotion with provenance and independent storage.
-- [ ] Implement video library, asset detail and workflow creation UI.
-- [ ] Integrate existing job detail, editor and job queue with assets.
+- [x] Implement video library, asset detail and workflow creation UI.
+- [x] Integrate existing job detail, editor and job queue with assets.
 - [ ] Validate synthetic media E2E, API permissions, failure/retry and migration.
 - [ ] Validate desktop/mobile UX; document operational and compatibility limits.
 - [ ] Deploy with paid calls disabled, verify existing data and commit/push.
@@ -84,3 +84,14 @@ Real tests: no Gemini requests. Mark tasks only after verification, not on start
 - The migration script is included in Docker images. Operational instructions are in `mvp2-operations.md`.
 - Verified: **309 backend tests passed** with paid calls disabled, including actual FFmpeg-generated MP4 upload, FFprobe metadata validation and HTTP range streaming. Migration repeatability/preservation, invalid-video rejection and reader/deletion conflicts are covered.
 - Actual user-data migration and Docker deployment have not run yet. Frontend/library/workflow UI and full media/browser release verification remain pending.
+
+## Video workspace frontend checkpoint
+
+- The first screen is the original-video library. Uploads accept only files, reset the picker immediately and use the persistent serial upload queue across hash navigation. Incomplete server sessions can resume after file reselection; completed bytes can retry registration without reupload.
+- Asset detail shows original playback, metadata/provenance, scoped SRT attachments and job history. Users can create independent workflows, import a specific job subtitle revision, choose extracted audio, inspect the server's execution plan and submit fixed settings.
+- The all-job queue retains start/retry/cancel/review/download/delete controls. Completed output videos can be registered as new originals; legacy jobs can register their original source explicitly.
+- Job detail links back to its source and plays the source video when a partial workflow has no encoded MP4. Existing subtitle tabs, timing seek and editing remain connected.
+- Verified: frontend unit tests **16 passed**, TypeScript/Vite production build passed; both browser suites passed against mocked API responses. Browser checks cover 320/390/768/1440 widths, original playback, template submission, serial two-file upload across navigation, picker reset, sidebar, subtitle editing and deep links.
+- Screenshots inspected: `data/mvp2-library-desktop.png`, `data/mvp2-workflow-mobile.png`. Fixed an inherited full-width button rule that squeezed the library heading.
+- Development frontend: `http://127.0.0.1:5183`. It is not the completed live deployment: the running production API/web have not been rebuilt yet, and browser tests intercept every API request.
+- Remaining: actual media workflow E2E, broader API ownership/failure gates, Docker rebuild and paid-disabled preview deployment, user-data migration verification, and final requirements audit.

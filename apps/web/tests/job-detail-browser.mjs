@@ -18,6 +18,8 @@ try {
   await page.route('**/api/**',route=>{
     const path=new URL(route.request().url()).pathname;
     if(path.endsWith('/auth/session'))return route.fulfill({json:{enabled:false,user:null}});
+    if(path==='/api/videos')return route.fulfill({json:{videos:[]}});
+    if(path==='/api/video-uploads')return route.fulfill({json:{uploads:[]}});
     if(path.endsWith('/jobs'))return route.fulfill({json:{jobs:[job]}});
     if(path.endsWith('/'+id))return route.fulfill({json:job});
     if(path.endsWith('/preview'))return route.fulfill({json:preview});
@@ -37,7 +39,7 @@ try {
     }
     return route.fulfill({status:503,json:{detail:'Writes disabled'}});
   });
-  const url=process.env.WEB_URL||'http://127.0.0.1:5177';
+  const url=process.env.WEB_URL||'http://127.0.0.1:5183';
   await page.goto(url+'/#/jobs/'+id);
   await page.locator('.job-detail h1').filter({hasText:job.original_filename}).waitFor();
   await page.waitForFunction(()=>document.querySelector('.player-surface video')?.readyState>=1);
@@ -81,16 +83,10 @@ try {
   await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'변경 버리고 닫기'}).click();
   await page.setViewportSize({width:1440,height:900});
-  await page.getByRole('button',{name:'영상 추가',exact:true}).filter({visible:true}).click();
-  await page.getByLabel('영상 설명 (선택)').fill('preserved draft');
-  await page.keyboard.press('Escape');
   await page.getByTitle('작업 목록으로').click();
   await page.locator('.job-title').click();
   await page.goBack();
   await page.getByRole('heading',{name:'전체 작업',exact:true}).waitFor();
-  await page.getByRole('button',{name:'영상 추가',exact:true}).filter({visible:true}).click();
-  assert.equal(await page.getByLabel('영상 설명 (선택)').inputValue(),'preserved draft');
-  await page.keyboard.press('Escape');
   job.status='TRANSLATING';
   preview={...preview,video_available:false,tracks:{...preview.tracks,translated:{available:false,partial:false,cues:[]}}};
   await page.goto(url+'/#/jobs/'+id);
@@ -100,5 +96,5 @@ try {
   await page.getByRole('tab',{name:'전사록',exact:true}).click();
   await page.getByText('First sentence',{exact:true}).waitFor();
   assert.deepEqual(errors,[]);
-  console.log('Detail page: responsive layout, video playback/seek, tabs/search, deep link/back, draft preservation and pending results passed.');
+  console.log('Detail page: responsive layout, video playback/seek, tabs/search, deep link/back, subtitle editing and pending results passed.');
 } finally {await browser.close();}

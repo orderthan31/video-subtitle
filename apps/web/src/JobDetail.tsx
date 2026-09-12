@@ -43,14 +43,16 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
     return ()=>{disposed=true;controller.abort();clearTimeout(timer);};
   },[id,reload]);
   const track = preview?.tracks[tab];
+  const videoAvailable = !!preview?.video_available || !!job?.metadata.asset_id;
+  const videoUrl = preview?.video_available?`${base}/jobs/${id}/stream`:`${base}/videos/${job?.metadata.asset_id}/stream`;
   const cues = track?.cues.filter(cue=>cue.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())) || [];
   function seek(cue:Cue) {
-    if (!video.current || !preview?.video_available || videoError) return;
+    if (!video.current || !videoAvailable || videoError) return;
     video.current.currentTime = cue.start;
     setTime(cue.start);
   }
   return <main className="job-detail">
-    <div className="detail-page-heading"><a href="#/" className="icon" title="작업 목록으로"><ArrowLeft size={22}/></a>
+    <div className="detail-page-heading"><a href={job?.metadata.asset_id?`#/videos/${job.metadata.asset_id}`:'#/jobs'} className="icon" title="작업 목록으로"><ArrowLeft size={22}/></a>
       <div><p className="eyebrow">작업 상세</p><h1 ref={heading} tabIndex={-1}>{job?.original_filename||'작업 불러오는 중'}</h1></div>
       <button className="icon" title="작업 새로고침" onClick={()=>setReload(n=>n+1)}><RefreshCw size={18}/></button>
     </div>
@@ -61,7 +63,7 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
       <section className="media-panel" aria-label="영상">
         <div className="panel-heading"><h2><Film size={18}/>영상</h2>{preview?.video_available&&<a className="download" href={`${base}/jobs/${id}/results/final.mp4`}><Download size={16}/>MP4</a>}</div>
         <div className="player-surface">
-          {preview?.video_available&&!editing?<video ref={video} controls playsInline preload="metadata" src={`${base}/jobs/${id}/stream`}
+          {videoAvailable&&!editing?<video ref={video} controls playsInline preload="metadata" src={videoUrl}
             onTimeUpdate={e=>setTime(e.currentTarget.currentTime)} onError={()=>setVideoError(true)} onLoadedMetadata={e=>{setVideoError(false);if(time>0)e.currentTarget.currentTime=time;}}/>:
             <div className="media-empty"><Film size={36}/><p>{editing?'자막 편집 중':preview?.expired?'영상 보관 기간이 만료되었습니다.':job?.status==='COMPLETED'?'영상 파일이 없습니다.':'영상 처리 완료 후 재생할 수 있습니다.'}</p></div>}
         </div>
@@ -72,9 +74,9 @@ export function JobDetail({id,labels}:{id:string;labels:Record<string,string>}) 
         <div className="tabs" role="tablist" aria-label="자막 종류">{([['original','전사록'],['translated','번역 자막']] as const).map(([value,label])=><button id={`tab-${value}`} key={value} role="tab" aria-selected={tab===value} aria-controls="cue-panel" tabIndex={tab===value?0:-1} onClick={()=>setTab(value)} onKeyDown={e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?'original':e.key==='End'?'translated':tab==='original'?'translated':'original';setTab(next);document.getElementById(`tab-${next}`)?.focus();}}}>{label}</button>)}</div>
         <div className="cue-toolbar"><label className="cue-search"><Search size={16}/><input aria-label="자막 검색" value={query} onChange={e=>setQuery(e.target.value)} placeholder="검색"/>{query&&<button className="icon" title="검색 지우기" onClick={()=>setQuery('')}><X size={16}/></button>}</label><span>{cues.length}개{track?.partial?' · 일부 결과':''}</span></div>
         <div id="cue-panel" role="tabpanel" aria-labelledby={`tab-${tab}`} className="cue-panel" tabIndex={0}>
-          {track?.available?(cues.length?cues.map((cue,index)=><button className={'preview-cue '+(time>=cue.start&&time<cue.end?'current':'')} key={`${cue.start}-${index}`} disabled={!preview?.video_available||videoError} onClick={()=>seek(cue)} aria-label={`${timestamp(cue.start)} ${cue.text}`}><time>{timestamp(cue.start)}</time><span>{cue.text}</span></button>):<div className="text-empty"><FileText size={28}/><p>{query?'검색 결과가 없습니다.':'저장된 대사가 없습니다.'}</p></div>):<div className="text-empty"><FileText size={28}/><p>{preview?.expired?'자막 보관 기간이 만료되었습니다.':tab==='original'?'전사 결과를 기다리고 있습니다.':'번역 결과를 기다리고 있습니다.'}</p></div>}
+          {track?.available?(cues.length?cues.map((cue,index)=><button className={'preview-cue '+(time>=cue.start&&time<cue.end?'current':'')} key={`${cue.start}-${index}`} disabled={!videoAvailable||videoError} onClick={()=>seek(cue)} aria-label={`${timestamp(cue.start)} ${cue.text}`}><time>{timestamp(cue.start)}</time><span>{cue.text}</span></button>):<div className="text-empty"><FileText size={28}/><p>{query?'검색 결과가 없습니다.':'저장된 대사가 없습니다.'}</p></div>):<div className="text-empty"><FileText size={28}/><p>{preview?.expired?'자막 보관 기간이 만료되었습니다.':tab==='original'?'전사 결과를 기다리고 있습니다.':'번역 결과를 기다리고 있습니다.'}</p></div>}
         </div>
-        {job?.status==='COMPLETED'&&!preview?.expired&&<div className="text-download"><button className="icon" title="최종 자막 편집" onClick={()=>setEditing(true)}><Pencil size={18}/></button><a className="download" href={`${base}/jobs/${id}/results/${tab==='original'?'original':'translated'}.srt`}><Download size={16}/>{tab==='original'?'원문 SRT':'번역 SRT'}</a></div>}
+        {job?.status==='COMPLETED'&&!preview?.expired&&track?.available&&<div className="text-download"><button className="icon" title="최종 자막 편집" onClick={()=>setEditing(true)}><Pencil size={18}/></button><a className="download" href={`${base}/jobs/${id}/results/${tab==='original'?'original':'translated'}.srt`}><Download size={16}/>{tab==='original'?'원문 SRT':'번역 SRT'}</a></div>}
       </section>
     </div>
     {editing&&job&&<SubtitleEditor job={job} initialTrack={tab} onClose={()=>setEditing(false)} onRendered={()=>setReload(n=>n+1)}/>}

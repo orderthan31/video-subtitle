@@ -11,6 +11,7 @@ export type Job = {
   source_language: string; video_codec?: string; subtitle_mode?: string; resolution?: string; additional_languages?: string[]; audio_filter?: string; review_subtitles?: boolean;
   error: string | null; status_message?: string | null;
   metadata: {cancel_requested?: boolean; duration?: number; stage_progress?: number | null; result_files?: string[]; failed_stage?: string;
+    asset_id?:string; workflow?:{template:string;stages:string[]}; subtitle_revision?:number;
     transcription_progress?: {total: number; completed: number; in_flight: number; retrying: number; failed: number; draining: boolean};
     translation_progress?: {language: string; total: number; completed: number; in_flight: number; retrying: number; failed: number; draining: boolean};
     results_expired_at?: string; upload_expired_at?: string};
@@ -26,22 +27,25 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return response.status === 204 ? undefined as T : response.json();
 }
-export async function resumeUpload(file: File, id: string, signal: AbortSignal, progress: (n: number) => void) {
+export async function resumeUpload(file: File, id: string, signal: AbortSignal, progress: (n: number) => void, namespace = '/uploads') {
   let retries = 0;
   while (!signal.aborted) {
     try {
-      const state = await uploadRequest<{uploaded_bytes: number; expected_size: number; resumable: boolean}>(`/uploads/${id}`, {signal});
-      if (!state.resumable) return;
+      const state = await uploadRequest<{uploaded_bytes: number; expected_size: number; resumable: boolean}>(`${namespace}/${id}`, {signal});
+      if (!state.resumable) {
+        if (namespace === '/video-uploads') await uploadRequest(`${namespace}/${id}/complete`, {method: 'POST', signal});
+        return;
+      }
       if (state.expected_size !== file.size) throw new ApiError(400, '원본 파일과 크기가 일치해야 합니다.');
       let offset = state.uploaded_bytes;
       progress(offset);
-      await verifyUploadedPrefix(file, offset, signal, block => uploadRequest<void>(`/uploads/${id}/verify`, {
+      await verifyUploadedPrefix(file, offset, signal, block => uploadRequest<void>(`${namespace}/${id}/verify`, {
         method: 'POST', signal, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(block),
       }));
       while (offset < file.size) {
         const chunk = file.slice(offset, offset + blockSize);
         signal.throwIfAborted();
-        const next = await uploadRequest<{uploaded_bytes: number}>(`/uploads/${id}/chunks?offset=${offset}`, {
+        const next = await uploadRequest<{uploaded_bytes: number}>(`${namespace}/${id}/chunks?offset=${offset}`, {
           method: 'PUT', body: chunk, signal, headers: {'Content-Type': 'application/octet-stream'},
         });
         if (next.uploaded_bytes <= offset) throw new Error('업로드 진행 정보를 확인할 수 없습니다.');
@@ -49,7 +53,7 @@ export async function resumeUpload(file: File, id: string, signal: AbortSignal, 
         progress(offset);
         retries = 0;
       }
-      await uploadRequest(`/uploads/${id}/complete`, {method: 'POST', signal});
+      await uploadRequest(`${namespace}/${id}/complete`, {method: 'POST', signal});
       return;
     } catch (error) {
       if (signal.aborted) return;
