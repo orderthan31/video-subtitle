@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
-import {ArrowLeft,Download,FileVideo,FolderOpen,ListVideo,PanelLeftClose,PanelLeftOpen,Pause,Play,Plus,Search,Trash2,Upload,X} from 'lucide-react';
+import {ArrowLeft,Download,FileVideo,FolderOpen,ListVideo,Menu,Pause,Play,Plus,Search,Trash2,Upload,X} from 'lucide-react';
 import {base,Job,request,resumeUpload,uploadRequest} from './api';
 import {AccountMenu} from './AuthGate';
 import {JobDetail} from './JobDetail';
@@ -57,7 +57,7 @@ export function VideoWorkspace(){
   const shownVideos=videos.filter(v=>v.original_filename.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const pendingSessions=sessions.filter(s=>!s.asset_id&&!uploads.some(u=>u.jobId===s.upload_id));
   return <div className={'app-shell video-workspace '+(sidebar?'sidebar-open':'sidebar-collapsed')}>
-    <header><div className="brand-controls"><button className="icon" title={sidebar?'사이드바 닫기':'사이드바 열기'} aria-expanded={sidebar} onClick={()=>setSidebar(v=>!v)}>{sidebar?<PanelLeftClose size={20}/>:<PanelLeftOpen size={20}/>}</button><a className="brand" href="#/" aria-label="장면 홈"><span className="brand-mark"><FileVideo size={21}/></span><strong>장면</strong><span className="brand-wordmark">JANGMYEON</span></a></div><div className="header-session"><span className={'connection '+(online?'online':'')}>{online?'연결됨':'연결 확인 중'}</span><AccountMenu/></div></header>
+    <header><div className="brand-controls"><button className="icon sidebar-toggle" title={sidebar?'사이드바 닫기':'사이드바 열기'} aria-label={sidebar?'사이드바 닫기':'사이드바 열기'} aria-expanded={sidebar} onClick={()=>setSidebar(v=>!v)}><Menu className="sidebar-menu-icon" size={22}/><X className="sidebar-close-icon" size={22}/></button><a className="brand" href="#/" aria-label="장면 홈"><span className="brand-mark"><FileVideo size={21}/></span><strong>장면</strong><span className="brand-wordmark">JANGMYEON</span></a></div><div className="header-session"><span className={'connection '+(online?'online':'')}>{online?'연결됨':'연결 확인 중'}</span><AccountMenu/></div></header>
     {sidebar&&<><button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}/><aside className="workspace-nav"><button className="primary" onClick={()=>{resume.current=null;input.current?.click();}}><Plus size={19}/>영상 업로드</button><nav><a href="#/" aria-current={!jobsView&&!jobId?'page':undefined}><FolderOpen size={19}/>원본 보관함<span>{videos.length}</span></a><a href="#/jobs" aria-current={jobsView||jobId?'page':undefined}><ListVideo size={19}/>전체 작업<span>{jobs.length}</span></a></nav></aside></>}
     <input ref={input} type="file" accept="video/*,.mkv,.mov,.avi,.webm" multiple={!resume.current} hidden onChange={e=>chooseFiles(e.target.files)}/>
     <input ref={srtInput} type="file" accept=".srt" hidden onChange={e=>void attachSrt(e.target.files?.[0])}/>

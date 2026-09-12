@@ -1,4 +1,6 @@
 .video-workspace .brand{gap:9px;text-decoration:none;color:#191f28}
+.sidebar-toggle .sidebar-close-icon{display:none}
+@media(max-width:720px){.sidebar-open .sidebar-toggle .sidebar-menu-icon{display:none}.sidebar-open .sidebar-toggle .sidebar-close-icon{display:block}}
 .brand-mark{display:grid;place-items:center;width:32px;height:32px;background:#3182f6;color:white;border-radius:8px}
 .video-workspace .brand .brand-mark svg{display:block;color:white;width:21px;height:21px}
 .brand strong{font-size:21px;font-weight:700}
