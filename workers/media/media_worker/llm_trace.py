@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from video_service.capacity import assert_capacity
 from video_service.storage import write_json_atomic
+from .llm_diagnostics import attempt_context
 
 
 _destination = ContextVar("llm_trace_destination", default=None)
@@ -53,7 +54,9 @@ def begin_call(model, attempt, payload, secret):
     _, directory = destination
     folder = directory / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ-") + uuid4().hex)
     folder.mkdir(parents=True)
+    context = attempt_context.get()
     save_trace(folder / "request.json", {"model": model, "attempt": attempt,
+        "diagnostic_context": context["identity"] if context is not None else None,
         "window": _window.get(), "payload": payload}, secret)
     return folder
 

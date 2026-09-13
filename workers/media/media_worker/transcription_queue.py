@@ -4,6 +4,7 @@ from collections import deque
 import time
 
 from video_service.storage import read_json, write_json_atomic
+from .llm_diagnostics import attempt_context, new_context, emit, exception_details
 
 
 class RetryableTranscriptionError(Exception):
@@ -57,6 +58,18 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
     failed = []
     halted = False
     cooldown = 0
+    diagnostics = {}
+
+    def record(index, outcome, **fields):
+        context = diagnostics[index]
+        token = attempt_context.set(context)
+        try:
+            emit("queue_attempt_finished", outcome=outcome,
+                elapsed_seconds=round(time.monotonic() - context["started"], 3), **fields)
+        finally:
+            attempt_context.reset(token)
+        history.append({"segment": index, "attempt": counts[index], "outcome": outcome,
+            "diagnostics": {"identity": context["identity"], "events": context["events"]}})
 
     def publish():
         snapshot = {"total": count, "completed": len(results), "in_flight": len(running),
@@ -69,7 +82,16 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
 
     async def invoke(index):
         # A total deadline also bounds requests whose server streams very slowly.
-        return await asyncio.wait_for(operation(index, counts[index]), timeout=125)
+        token = attempt_context.set(diagnostics[index])
+        task = asyncio.create_task(operation(index, counts[index]))
+        try:
+            return await asyncio.wait_for(task, timeout=125)
+        except TimeoutError:
+            emit("operation_timeout", category="local_queue_deadline" if task.cancelled() else "operation_timeout",
+                deadline_seconds=125)
+            raise
+        finally:
+            attempt_context.reset(token)
 
     try:
         publish()
@@ -88,6 +110,10 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
                     else:
                         break
                     counts[index] = counts.get(index, 0) + 1
+                    diagnostics[index] = new_context(segment=index, attempt=counts[index],
+                        stage="translation" if issubclass(failure_type, PartialTranslationError) else "transcription",
+                        job_id=path.parent.parent.parent.name if path is not None else None,
+                        queue_id=path.stem if path is not None else None)
                     running[asyncio.create_task(invoke(index))] = index
                     admitted = True
                 if admitted:
@@ -101,11 +127,20 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
             # Inspect every completed request before admitting any new work.
             for task in sorted(done, key=lambda item: running[item]):
                 index = running.pop(task)
+                validating = False
                 try:
-                    results[index] = validate(index, task.result())
-                    history.append({"segment": index, "attempt": counts[index], "outcome": "success"})
+                    result = task.result()
+                    validating = True
+                    results[index] = validate(index, result)
+                    record(index, "success", retryable=False)
                 except (RetryableTranscriptionError, ValueError, TimeoutError) as exc:
-                    history.append({"segment": index, "attempt": counts[index], "outcome": type(exc).__name__})
+                    exhausted = counts[index] >= attempts
+                    delay = max(2 ** (counts[index] - 1), getattr(exc, "delay", 0))
+                    record(index, type(exc).__name__, retryable=True, exhausted=exhausted,
+                        retry_scheduled=not exhausted, delay_seconds=None if exhausted else delay,
+                        shared_cooldown=getattr(exc, "shared_cooldown", False),
+                        failure_phase="output_validation" if validating else "operation",
+                        **exception_details(exc))
                     if counts[index] >= attempts:
                         failed.append(index)
                         halted = True
@@ -115,7 +150,8 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
                         if getattr(exc, "shared_cooldown", False):
                             cooldown = max(cooldown, retries[index])
                 except Exception as exc:
-                    history.append({"segment": index, "attempt": counts[index], "outcome": type(exc).__name__})
+                    record(index, type(exc).__name__, retryable=False, retry_scheduled=False,
+                        failure_phase="output_validation" if validating else "operation", **exception_details(exc))
                     failed.append(index)
                     halted = True
             if done:

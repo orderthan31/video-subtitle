@@ -24,6 +24,7 @@ from .transcription_queue import run_transcription_queue, run_segment_queue, Ret
 from video_service.capacity import assert_capacity
 from video_service.storage import read_json, write_json_atomic
 from .translation_inputs import translation_groups
+from .llm_diagnostics import emit, exception_details, attempt_context, new_context
 
 
 class GeminiProvider:
@@ -52,11 +53,48 @@ class GeminiProvider:
                 sdk.close()
 
     async def _request(self, parts, schema, check, model, transcription_config=None, *, max_attempts=3, trace_attempt=None):
+        token = None
+        if attempt_context.get() is None:
+            token = attempt_context.set(new_context(model=model))
+        started = time.monotonic()
+        try:
+            result = await self._request_impl(parts, schema, check, model, transcription_config,
+                max_attempts=max_attempts, trace_attempt=trace_attempt)
+            emit("request_parsed", elapsed_seconds=round(time.monotonic() - started, 3))
+            return result
+        except asyncio.CancelledError:
+            emit("request_cancelled", category="cancellation_cause_unknown",
+                elapsed_seconds=round(time.monotonic() - started, 3))
+            raise
+        except Exception as error:
+            emit("request_failed", **exception_details(error),
+                elapsed_seconds=round(time.monotonic() - started, 3))
+            raise
+        finally:
+            if token is not None:
+                attempt_context.reset(token)
+
+    async def _request_impl(self, parts, schema, check, model, transcription_config=None, *, max_attempts=3, trace_attempt=None):
         response = None
         trace = None
+        started = time.monotonic()
 
         async def capture_response(value):
             nonlocal response
+            status = value.status_code
+            category = ("remote_rate_limit" if status == 429 else
+                "remote_http_error" if status >= 500 else
+                "authentication_or_permission_rejected" if status in (401, 403) else
+                "http_request_rejected" if status >= 400 else "http_response_received")
+            # Read headers before the body: a ReadError must not hide the HTTP status.
+            identifiers = {}
+            for name in ("x-request-id", "x-goog-request-id", "x-cloud-trace-context", "retry-after"):
+                value_header = value.headers.get(name, "")
+                if value_header and re.fullmatch(r"[A-Za-z0-9_.:/;, =+-]{1,200}", value_header) and self.key not in value_header:
+                    identifiers[name] = value_header
+            emit("http_headers", category=category, status=status,
+                endpoint_host=value.request.url.host, response_identifiers=identifiers,
+                elapsed_seconds=round(time.monotonic() - started, 3))
             await value.aread()
             response = value
             finish_call(trace, self.key, status=value.status_code, body=value.text,
@@ -89,6 +127,9 @@ class GeminiProvider:
                     "generationConfig": ({"audioTranscriptionConfig": transcription_config} if transcription_config is not None
                         else {"responseMimeType": "application/json", "responseSchema": schema})}
                 trace = begin_call(model, trace_attempt or attempt + 1, payload, self.key)
+                started = time.monotonic()
+                emit("request_started", model=model, request_attempt=trace_attempt or attempt + 1,
+                    trace_id=trace.name if trace is not None else None, http_timeout_seconds=120)
                 task = asyncio.create_task(client.models.generate_content(model=model,
                     contents=[types.Content(role="user", parts=sdk_parts)], config=config))
                 response = None
@@ -97,10 +138,19 @@ class GeminiProvider:
                         await asyncio.wait({task}, timeout=0.25)
                         check()
                     await task
-                except errors.APIError:
+                except errors.APIError as error:
+                    emit("sdk_api_error", **exception_details(error),
+                        sdk_reported_code=error.code if isinstance(error.code, int) else None,
+                        complete_http_response_captured=response is not None)
                     if response is None:
                         raise RuntimeError("Gemini SDK failed without an HTTP response") from None
                 except httpx.TransportError as error:
+                    try:
+                        endpoint_host = error.request.url.host
+                    except RuntimeError:
+                        endpoint_host = None
+                    emit("transport_failed", **exception_details(error), endpoint_host=endpoint_host,
+                        elapsed_seconds=round(time.monotonic() - started, 3))
                     finish_call(trace, self.key, transport_error=type(error).__name__)
                     if max_attempts == 1:
                         raise RetryableTranscriptionError("Gemini transport failure") from None
@@ -112,21 +162,34 @@ class GeminiProvider:
                         await asyncio.gather(task, return_exceptions=True)
                         finish_call(trace, self.key, cancelled=True)
                 if max_attempts == 1 and response is not None and response.status_code in (429, 500, 502, 503, 504):
+                    delay = retry_delay(response, 0)
+                    emit("retry_decision", owner="segment_queue", retryable=True,
+                        status=response.status_code, retry_after_seconds=delay,
+                        shared_cooldown=response.status_code == 429)
                     raise RetryableTranscriptionError(f"Gemini HTTP {response.status_code}",
-                        retry_delay(response, 0), shared_cooldown=response.status_code == 429)
+                        delay, shared_cooldown=response.status_code == 429)
                 if response is None or (response.status_code in (429, 500, 502, 503, 504) and attempt < 2):
-                    await wait_for_retry(retry_delay(response, attempt), check)
+                    delay = retry_delay(response, attempt)
+                    emit("retry_decision", owner="request", retryable=True,
+                        delay_seconds=delay)
+                    await wait_for_retry(delay, check)
                     continue
                 if response.is_error:
                     raise RuntimeError(f"Gemini request failed (HTTP {response.status_code})")
-                data = response.json()
+                try:
+                    data = response.json()
+                except ValueError:
+                    emit("response_validation_failed", category="remote_output_invalid_json", status=response.status_code)
+                    raise
                 candidates = data.get("candidates", [])
                 if not candidates or candidates[0].get("finishReason") != "STOP":
+                    emit("response_validation_failed", category="remote_output_incomplete_or_blocked", status=response.status_code)
                     raise ValueError("Gemini returned incomplete or blocked output")
                 if transcription_config is not None:
                     try:
                         return parse_word_transcriptions(candidates[0]["content"]["parts"], group=False)
                     except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as error:
+                        emit("response_validation_failed", category="remote_output_word_timing_invalid")
                         reason = str(error) if isinstance(error, WordTimestampError) else "malformed word annotations"
                         if attempt == 2:
                             raise WordTimestampError(f"STT word timing validation failed after 3 attempts: {reason}") from None
@@ -136,8 +199,13 @@ class GeminiProvider:
                 try:
                     text = "".join(part.get("text", "") for part in candidates[0]["content"]["parts"])
                 except (KeyError, TypeError, AttributeError):
+                    emit("response_validation_failed", category="remote_output_content_invalid")
                     raise ValueError("Gemini returned malformed content") from None
-                return json.loads(text)
+                try:
+                    return json.loads(text)
+                except ValueError:
+                    emit("response_validation_failed", category="remote_output_invalid_json", status=response.status_code)
+                    raise
 
     def request(self, parts, schema, check, model, transcription_config=None):
         return asyncio.run(self._request(parts, schema, check, model, transcription_config))

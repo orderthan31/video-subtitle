@@ -64,6 +64,9 @@ class TranscriptionQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item for item in called if item[0] == 0], [(0, 1), (0, 2), (0, 3)])
         self.assertTrue(all(index < 3 for index, _ in called))
         self.assertTrue(any(item["draining"] for item in snapshots))
+        failures = [item for item in read_json(self.path)["history"] if item["segment"] == 0]
+        self.assertEqual([item["diagnostics"]["events"][-1]["exhausted"] for item in failures], [False, False, True])
+        self.assertEqual(len({item["diagnostics"]["identity"]["attempt_id"] for item in failures}), 3)
         called.clear()
         async def resume(index, attempt):
             called.append((index, attempt))
