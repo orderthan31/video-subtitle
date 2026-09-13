@@ -6,7 +6,7 @@ import hashlib
 import os
 from uuid import uuid4
 
-from video_service.capacity import assert_capacity
+from .worker_storage import check_capacity as assert_capacity, capacity_estimate
 from video_service.storage import write_json_atomic
 from .llm_diagnostics import attempt_context
 
@@ -19,7 +19,8 @@ _window = ContextVar("llm_trace_window", default=None)
 def capture_calls(storage_root, directory):
     token = _destination.set((storage_root, directory) if directory is not None else None)
     try:
-        yield
+        with capacity_estimate(storage_root):
+            yield
     finally:
         _destination.reset(token)
 

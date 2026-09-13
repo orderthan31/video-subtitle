@@ -30,7 +30,8 @@ from .transcription_queue import PartialTranscriptionError, PartialTranslationEr
 from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
-from video_service.capacity import assert_capacity, reserve_workspace
+from video_service.capacity import reserve_workspace
+from .worker_storage import check_capacity as assert_capacity
 from .shutdown import shutdown_signals, WorkerStopping
 from .validation import validate_cues, validate_output, validate_decodable
 

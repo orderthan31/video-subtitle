@@ -21,10 +21,13 @@ from video_service.timeline import identity_timeline
 from .llm_trace import begin_call, finish_call, audio_window, cached_result
 from .sentence_transcription import SCHEMA as SENTENCE_SCHEMA, transcription_prompt, validate_sentences
 from .transcription_queue import run_transcription_queue, run_segment_queue, RetryableTranscriptionError, PartialTranscriptionError, PartialTranslationError
-from video_service.capacity import assert_capacity
+from .worker_storage import check_capacity as assert_capacity, disk_call
 from video_service.storage import read_json, write_json_atomic
 from .translation_inputs import translation_groups
 from .llm_diagnostics import emit, exception_details, attempt_context, new_context
+
+
+REQUEST_DEADLINE_SECONDS = 125
 
 
 class GeminiProvider:
@@ -97,8 +100,6 @@ class GeminiProvider:
                 elapsed_seconds=round(time.monotonic() - started, 3))
             await value.aread()
             response = value
-            finish_call(trace, self.key, status=value.status_code, body=value.text,
-                sent_request_body=value.request.content.decode("utf-8"))
 
         sdk_parts = []
         for part in parts:
@@ -126,7 +127,7 @@ class GeminiProvider:
                         for setting in config.safety_settings],
                     "generationConfig": ({"audioTranscriptionConfig": transcription_config} if transcription_config is not None
                         else {"responseMimeType": "application/json", "responseSchema": schema})}
-                trace = begin_call(model, trace_attempt or attempt + 1, payload, self.key)
+                trace = await disk_call(begin_call, model, trace_attempt or attempt + 1, payload, self.key)
                 started = time.monotonic()
                 emit("request_started", model=model, request_attempt=trace_attempt or attempt + 1,
                     trace_id=trace.name if trace is not None else None, http_timeout_seconds=120)
@@ -134,10 +135,15 @@ class GeminiProvider:
                     contents=[types.Content(role="user", parts=sdk_parts)], config=config))
                 response = None
                 try:
-                    while not task.done():
-                        await asyncio.wait({task}, timeout=0.25)
-                        check()
-                    await task
+                    async with asyncio.timeout(REQUEST_DEADLINE_SECONDS) as deadline:
+                        while not task.done():
+                            await asyncio.wait({task}, timeout=0.25)
+                            check()
+                        await task
+                except TimeoutError:
+                    emit("request_timeout", category="local_request_deadline" if deadline.expired() else "transport_timeout",
+                        deadline_seconds=REQUEST_DEADLINE_SECONDS)
+                    raise
                 except errors.APIError as error:
                     emit("sdk_api_error", **exception_details(error),
                         sdk_reported_code=error.code if isinstance(error.code, int) else None,
@@ -151,7 +157,7 @@ class GeminiProvider:
                         endpoint_host = None
                     emit("transport_failed", **exception_details(error), endpoint_host=endpoint_host,
                         elapsed_seconds=round(time.monotonic() - started, 3))
-                    finish_call(trace, self.key, transport_error=type(error).__name__)
+                    await disk_call(finish_call, trace, self.key, transport_error=type(error).__name__)
                     if max_attempts == 1:
                         raise RetryableTranscriptionError("Gemini transport failure") from None
                     if attempt == 2:
@@ -160,7 +166,11 @@ class GeminiProvider:
                     if not task.done():
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
-                        finish_call(trace, self.key, cancelled=True)
+                        if response is None:
+                            await disk_call(finish_call, trace, self.key, cancelled=True)
+                    if response is not None:
+                        await disk_call(finish_call, trace, self.key, status=response.status_code, body=response.text,
+                            sent_request_body=response.request.content.decode("utf-8"))
                 if max_attempts == 1 and response is not None and response.status_code in (429, 500, 502, 503, 504):
                     delay = retry_delay(response, 0)
                     emit("retry_decision", owner="segment_queue", retryable=True,
@@ -285,7 +295,7 @@ class GeminiProvider:
 
         try:
             results = asyncio.run(run_transcription_queue(len(windows), operation, check, progress,
-                path=path, validate=validate, before_write=lambda size: assert_capacity(work.parents[1],
+                path=path, validate=validate, operation_timeout=None, before_write=lambda size: assert_capacity(work.parents[1],
                     int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
                     int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size)))
         except PartialTranscriptionError as exc:
@@ -368,7 +378,7 @@ class GeminiProvider:
         try:
             results = asyncio.run(run_segment_queue(len(batches), operation, check,
                 lambda value: progress({**value, **stats}), path=path,
-                validate=validate, failure_type=PartialTranslationError,
+                validate=validate, failure_type=PartialTranslationError, operation_timeout=None,
                 before_write=lambda size: assert_capacity(work.parents[1],
                     int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
                     int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size)))

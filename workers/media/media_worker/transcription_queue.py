@@ -4,7 +4,9 @@ from collections import deque
 import time
 
 from video_service.storage import read_json, write_json_atomic
+from video_service.capacity import StorageLimitError
 from .llm_diagnostics import attempt_context, new_context, emit, exception_details
+from .worker_storage import disk_call
 
 
 class RetryableTranscriptionError(Exception):
@@ -31,7 +33,7 @@ class PartialTranslationError(PartialTranscriptionError):
 
 async def run_segment_queue(count, operation, check, progress, *, path=None, before_write=None,
                             validate=lambda index, result: result, concurrency=3, attempts=3,
-                            failure_type=PartialTranscriptionError):
+                            failure_type=PartialTranscriptionError, operation_timeout=125):
     results = {}
     history = []
     if path is not None:
@@ -71,32 +73,34 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
         history.append({"segment": index, "attempt": counts[index], "outcome": outcome,
             "diagnostics": {"identity": context["identity"], "events": context["events"]}})
 
-    def publish():
+    async def publish():
         snapshot = {"total": count, "completed": len(results), "in_flight": len(running),
                     "retrying": len(retries), "failed": len(failed), "draining": halted and bool(running)}
         if path is not None:
-            write_json_atomic(path, {"count": count, "results": {str(k): v for k, v in results.items()},
+            await disk_call(write_json_atomic, path, {"count": count, "results": {str(k): v for k, v in results.items()},
                 "failed": failed, "attempts": counts, "history": history, "progress": snapshot},
                 before_write=before_write)
-        progress(snapshot)
+        await disk_call(progress, snapshot)
 
     async def invoke(index):
         # A total deadline also bounds requests whose server streams very slowly.
         token = attempt_context.set(diagnostics[index])
         task = asyncio.create_task(operation(index, counts[index]))
         try:
-            return await asyncio.wait_for(task, timeout=125)
+            if operation_timeout is None:
+                return await task
+            return await asyncio.wait_for(task, timeout=operation_timeout)
         except TimeoutError:
             emit("operation_timeout", category="local_queue_deadline" if task.cancelled() else "operation_timeout",
-                deadline_seconds=125)
+                deadline_seconds=operation_timeout)
             raise
         finally:
             attempt_context.reset(token)
 
     try:
-        publish()
+        await publish()
         while pending or retries or running:
-            check()
+            await disk_call(check)
             now = time.monotonic()
             if not halted and now >= cooldown:
                 admitted = False
@@ -117,7 +121,7 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
                     running[asyncio.create_task(invoke(index))] = index
                     admitted = True
                 if admitted:
-                    publish()
+                    await publish()
             if not running:
                 if halted:
                     break
@@ -133,6 +137,11 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
                     validating = True
                     results[index] = validate(index, result)
                     record(index, "success", retryable=False)
+                except StorageLimitError as exc:
+                    record(index, type(exc).__name__, retryable=False, retry_scheduled=False,
+                        category="local_storage_limit", failure_phase="storage")
+                    failed.append(index)
+                    halted = True
                 except (RetryableTranscriptionError, ValueError, TimeoutError) as exc:
                     exhausted = counts[index] >= attempts
                     delay = max(2 ** (counts[index] - 1), getattr(exc, "delay", 0))
@@ -155,7 +164,7 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
                     failed.append(index)
                     halted = True
             if done:
-                publish()
+                await publish()
         if failed:
             raise failure_type(results, sorted(failed))
         return results

@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 import json
 import base64
 import shutil
+import asyncio
+import time
 from uuid import uuid4
 
 import httpx
@@ -39,6 +41,22 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.request(), ["Translated"])
         self.assertEqual(self.client.post.call_count, 3)
         self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 3)
+
+    async def test_slow_trace_write_is_outside_network_deadline(self):
+        self.client.post.return_value = self.success
+        with patch("media_worker.providers.REQUEST_DEADLINE_SECONDS", .05), \
+                patch("media_worker.providers.finish_call", side_effect=lambda *a, **kw: time.sleep(.1)):
+            self.assertEqual(await self.request(), ["Translated"])
+        self.assertEqual(self.client.post.call_count, 1)
+
+    async def test_actual_network_deadline_cancels_request(self):
+        async def never(*args, **kwargs):
+            await asyncio.Event().wait()
+        self.client.post.side_effect = never
+        with patch("media_worker.providers.REQUEST_DEADLINE_SECONDS", .03):
+            with self.assertRaises(TimeoutError):
+                await self.request()
+        self.assertEqual(self.client.post.call_count, 1)
 
     async def test_exhausted_transport_does_not_expose_error_details(self):
         self.client.post.side_effect = httpx.ConnectError("sensitive diagnostic")
