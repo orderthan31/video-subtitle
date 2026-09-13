@@ -1,7 +1,8 @@
 # LLM failure diagnostics
 
-Status: source changes only; no deployment or service restart. Existing logs
-cannot retroactively provide missing connection causes.
+The initial diagnostics revision (44357ab) was deployed on 2026-09-13. Subsequent
+storage/deadline and input changes are source-only until explicitly deployed.
+Existing logs cannot retroactively provide missing connection causes.
 
 ## Where to look
 
@@ -32,6 +33,8 @@ cannot retroactively provide missing connection causes.
 | `remote_output_invalid_json` / incomplete or blocked output | Received output failed parsing/completeness requirements. |
 | `output_rejected_by_local_validator` | Our validator rejected returned content. A safe reason code distinguishes sentence timestamps, sentence structure/text, or translation output shape. This is not proof the validator is correct. |
 | `local_queue_deadline` | The queue cancelled its operation at the existing 125-second deadline. The underlying reason it was slow remains unknown. |
+| `local_request_deadline` | The provider's network/body-read deadline expired, excluding raw trace persistence in the revised worker. |
+| `local_storage_limit` | Local quota or free-space guard stopped an attempt without a paid retry. |
 | `operation_timeout` | The operation itself raised TimeoutError; not mislabeled as the queue deadline. |
 | `cancellation_cause_unknown` | Request cancellation observed. Correlate a queue deadline or worker cancellation; do not assume Gemini failed. |
 | `unclassified_exception` | Insufficient classification evidence; inspect other events in the same attempt. |

@@ -7,6 +7,8 @@ import shutil
 import uuid
 import wave
 import asyncio
+import json
+import hashlib
 import httpx
 from unittest.mock import Mock, AsyncMock, patch
 
@@ -15,6 +17,8 @@ sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.providers import GeminiProvider, WordTimestampError, parse_word_transcriptions, transcription_windows
 from video_service.timeline import build_timeline_from_kept_intervals, project_segment_to_original
 from sdk_fixture import sdk_fixture
+from media_worker.sentence_transcription import transcription_prompt
+from video_service.storage import write_json_atomic
 
 
 class TranscriptionTests(unittest.TestCase):
@@ -103,6 +107,8 @@ class TranscriptionTests(unittest.TestCase):
         frames = []
 
         async def request(parts, *args, **kwargs):
+            self.assertIn('[1.0]', parts[0]['text'])
+            self.assertIn('without resetting', parts[0]['text'])
             with wave.open(io.BytesIO(base64.b64decode(parts[1]["inlineData"]["data"]))) as chunk:
                 frames.append(chunk.readframes(chunk.getnframes()))
             return [{"start": 0, "end": 2, "text": "Speech"}]
@@ -120,6 +126,53 @@ class TranscriptionTests(unittest.TestCase):
 
     def test_empty_audio_has_no_requests(self):
         self.assertEqual(list(transcription_windows(0, 100, [])), [])
+
+    def test_legacy_partial_transcription_resumes_without_new_prompt(self):
+        folder = ROOT / 'data/test-runs' / uuid.uuid4().hex
+        folder.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, folder)
+        source = folder / 'audio.wav'
+        with wave.open(str(source), 'wb') as audio:
+            audio.setparams((1, 2, 100, 0, 'NONE', 'not compressed'))
+            audio.writeframes(bytes(63 * 200))
+        provider = GeminiProvider.__new__(GeminiProvider)
+        provider.transcription_model = 'test-model'
+        identity = ['packed-sentence-60-v2', 'test-model', transcription_prompt('en', 60),
+            source.stat().st_size, source.stat().st_mtime_ns, [(0, 0, 6000), (6000, 6000, 6300)]]
+        key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        work = folder / 'job/work'
+        saved = [{'start': 1, 'end': 2, 'text': 'Saved'}]
+        write_json_atomic(work / 'transcription' / (key + '.json'), {'count': 2, 'results': {'0': saved}})
+        provider._request = AsyncMock(return_value=[{'start': 0, 'end': 1, 'text': 'Remaining'}])
+        spans = build_timeline_from_kept_intervals([(0, 61), (70, 72)])
+        result = provider.transcribe(source, 'en', lambda: None, spans=spans, work=work)
+        self.assertEqual([s.text for s in result], ['Saved', 'Remaining'])
+        self.assertEqual(provider._request.call_count, 1)
+        self.assertEqual(provider._request.call_args.args[0][0]['text'], transcription_prompt('en', 3))
+        provider._request.reset_mock()
+        provider.transcribe(source, 'en', lambda: None, spans=spans, work=work)
+        provider._request.assert_not_called()
+
+    def test_new_splice_prompts_use_clip_clock_and_resume_v3(self):
+        folder = ROOT / 'data/test-runs' / uuid.uuid4().hex
+        folder.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, folder)
+        source = folder / 'audio.wav'
+        with wave.open(str(source), 'wb') as audio:
+            audio.setparams((1, 2, 100, 0, 'NONE', 'not compressed'))
+            audio.writeframes(bytes(63 * 200))
+        provider = GeminiProvider.__new__(GeminiProvider)
+        provider.transcription_model = 'test-model'
+        provider._request = AsyncMock(return_value=[])
+        spans = build_timeline_from_kept_intervals([(0, 30), (40, 71), (90, 92)])
+        work = folder / 'job/work'
+        provider.transcribe(source, 'en', lambda: None, spans=iter(spans), work=work)
+        prompts = [call.args[0][0]['text'] for call in provider._request.call_args_list]
+        self.assertIn('[30.0]', prompts[0])
+        self.assertIn('[1.0]', prompts[1])
+        provider._request.reset_mock()
+        provider.transcribe(source, 'en', lambda: None, spans=spans, work=work)
+        provider._request.assert_not_called()
 
     def test_native_response_keeps_words_until_chunk_ownership(self):
         provider = GeminiProvider.__new__(GeminiProvider)

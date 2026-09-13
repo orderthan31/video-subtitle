@@ -42,6 +42,7 @@ def exception_details(error):
         "STT must return a list of sentence segments": "stt_sentence_list",
         "Invalid STT sentence text": "stt_sentence_text",
         "Translation output does not match input segments": "translation_output_shape",
+        "Translation output IDs do not match input targets": "translation_output_ids",
     }
     details = {"category": category, "exception_chain": chain}
     if isinstance(error, ValueError) and str(error) in reasons:

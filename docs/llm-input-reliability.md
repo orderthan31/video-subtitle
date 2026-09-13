@@ -26,3 +26,28 @@ Verification uses mocked Gemini transport and synthetic slow I/O, never paid
 model calls. Tests cover charged writes, audit refresh, shared thread context,
 cancellation draining, slow progress/trace persistence, actual network timeouts,
 non-retryable storage failure, existing retries and checkpoint resume.
+
+## Input protocol
+
+- New transcription queues describe discontinuities in packed audio using
+  clip-relative splice times. No silence or padding is inserted, and audio bytes
+  and timeline restoration remain unchanged. The instruction asks for separate
+  audible fragments without resetting the clip clock.
+- New translation queues use global group IDs with `{id, text}` targets and
+  responses. Missing, duplicate, unknown IDs or empty translations fail validation;
+  reordered responses are safely realigned before expanding grouped cues.
+- Two source cues before and after each batch are reference-only context. Each
+  reference is capped at 1000 characters; target text is never truncated. No
+  translated batch is needed, so three-way parallel execution remains possible.
+- Context and IDs increase prompt size. They are quality/association safeguards,
+  not a claim of lower per-request token cost. Live quality and latency have not
+  been measured; unit tests cannot establish translation quality.
+- Existing transcription v2 and translation v1/adjacent-v2 checkpoints keep their
+  old prompts and batch layout, including missing-batch retries. New queues use
+  separate v3 namespaces whose identities include actual prompts/context.
+- Completed results are not invalidated or regenerated. Reusing a v3 checkpoint
+  still skips every completed batch; stored aligned translations remain strings.
+
+`local_io_finished` records trace persistence durations and other disk callbacks
+that take at least one second. `local_request_deadline` identifies the provider's
+network deadline; generic queue callers can still report `local_queue_deadline`.

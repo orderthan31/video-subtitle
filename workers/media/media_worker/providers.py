@@ -24,6 +24,7 @@ from .transcription_queue import run_transcription_queue, run_segment_queue, Ret
 from .worker_storage import check_capacity as assert_capacity, disk_call
 from video_service.storage import read_json, write_json_atomic
 from .translation_inputs import translation_groups
+from .translation_requests import requests as translation_requests, align_result, SCHEMA as TRANSLATION_SCHEMA
 from .llm_diagnostics import emit, exception_details, attempt_context, new_context
 
 
@@ -258,6 +259,7 @@ class GeminiProvider:
             rate = audio.getframerate()
             total = audio.getnframes()
             if spans is not None:
+                spans = list(spans)
                 # Validate the original-time map, but pack requests across its joins.
                 list(transcription_windows(total, rate, spans, context_seconds=0))
             regions = identity_timeline(total / rate)
@@ -266,6 +268,16 @@ class GeminiProvider:
                     source.stat().st_size, source.stat().st_mtime_ns, [(a, b, c) for a, b, c, _ in windows]]
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         path = work / "transcription" / f"{key}.json" if work is not None else None
+        prompts = [transcription_prompt(language, (right - left) / rate) for _, left, right, _ in windows]
+        # Preserve paid partial results in the pre-splice namespace when resuming.
+        if path is None or not path.exists():
+            joins = [b.processed_start for a, b in zip(spans or [], (spans or [])[1:])
+                     if b.original_start - a.original_end > 1e-6]
+            prompts = [transcription_prompt(language, (right - left) / rate,
+                [round(join - left / rate, 6) for join in joins if left / rate < join < right / rate])
+                for _, left, right, _ in windows]
+            key = hashlib.sha256(json.dumps(["packed-sentence-splices-v3", identity, prompts], sort_keys=True).encode()).hexdigest()
+            path = work / "transcription" / f"{key}.json" if work is not None else None
 
         def validate(index, result):
             _, left, right, _ = windows[index]
@@ -279,7 +291,7 @@ class GeminiProvider:
                 chunk.setparams(audio.getparams())
                 chunk.writeframes(audio.readframes(right - left))
             with audio_window(left, right, rate, 0):
-                return await self._request([{"text": transcription_prompt(language, (right - left) / rate)},
+                return await self._request([{"text": prompts[index]},
                     {"inlineData": {"mimeType": "audio/wav", "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}],
                     SENTENCE_SCHEMA, lambda: None, self.transcription_model, max_attempts=1, trace_attempt=attempt)
 
@@ -352,8 +364,15 @@ class GeminiProvider:
             batches = [groups[offset:offset+40] for offset in range(0, len(groups), 40)]
             prompts = make_prompts(batches)
             path = cache_path(prompts, 'parallel-translation-40-adjacent-v2')
+        identified = not (path is not None and path.exists())
+        target_ids = []
+        if identified:
+            prompts, target_ids = translation_requests(groups, language, context)
+            schema = TRANSLATION_SCHEMA
+            path = cache_path(prompts, 'parallel-translation-40-ids-context-v3')
         stats = {'input_segments': len(segments), 'translation_units': len(groups),
-                 'deduplicated_segments': len(segments) - len(groups), 'legacy_resume': legacy_resume}
+                 'deduplicated_segments': len(segments) - len(groups), 'legacy_resume': legacy_resume,
+                 'request_protocol': 'ids-context-v3' if identified else 'string-array-legacy'}
         if work is not None:
             write_json_atomic(work / 'translation-input-plan.json', {**stats,
                 'groups': [[[s.start, s.end] for s in group] for group in groups]},
@@ -368,8 +387,9 @@ class GeminiProvider:
             return translated
 
         async def operation(index, attempt):
-            return await self._request([{"text": prompts[index]}], schema, lambda: None,
+            result = await self._request([{"text": prompts[index]}], schema, lambda: None,
                 self.translation_model, max_attempts=1, trace_attempt=attempt)
+            return align_result(result, target_ids[index]) if identified else result
 
         def merge(results):
             return [segment.with_text(text) for index in sorted(results)

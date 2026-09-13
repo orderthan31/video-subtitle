@@ -18,6 +18,7 @@ from media_worker.transcription_queue import RetryableTranscriptionError
 from media_worker.process import Cancelled
 from media_worker.llm_trace import capture_calls, audio_window
 from sdk_fixture import sdk_fixture
+from media_worker.translation_requests import SCHEMA as TRANSLATION_SCHEMA
 
 
 class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
@@ -57,6 +58,16 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TimeoutError):
                 await self.request()
         self.assertEqual(self.client.post.call_count, 1)
+
+    async def test_identified_translation_schema_is_serialized_by_sdk(self):
+        values = [{'id': 'cue-000001', 'text': 'Translated'}]
+        self.client.post.return_value = httpx.Response(200, json={'candidates': [{'finishReason': 'STOP',
+            'content': {'parts': [{'text': json.dumps(values)}]}}]})
+        result = await self.provider._request([{'text': 'mock targets'}], TRANSLATION_SCHEMA,
+            lambda: None, 'test-model', max_attempts=1)
+        self.assertEqual(result, values)
+        schema = self.client.post.call_args.kwargs['json']['generationConfig']['responseSchema']
+        self.assertEqual(schema['items']['required'], ['id', 'text'])
 
     async def test_exhausted_transport_does_not_expose_error_details(self):
         self.client.post.side_effect = httpx.ConnectError("sensitive diagnostic")

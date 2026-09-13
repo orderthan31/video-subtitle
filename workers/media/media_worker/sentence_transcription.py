@@ -1,4 +1,5 @@
 import math
+import json
 
 
 SCHEMA = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
@@ -6,8 +7,8 @@ SCHEMA = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
 }, "required": ["start", "end", "text"]}}
 
 
-def transcription_prompt(language, duration):
-    return (
+def transcription_prompt(language, duration, joins=()):
+    prompt = (
         "Transcribe the attached audio into subtitle-ready sentences or natural utterances. "
         "Return JSON objects with start, end, and text. Never split into individual words, "
         "syllables, or Japanese morphemes. Exclude non-communicative exertion cries, grunts, "
@@ -25,6 +26,13 @@ def transcription_prompt(language, duration):
         "boundary, transcribe only the audible fragment. Return [] if there is no intelligible speech. "
         f"Source language: {language if language != 'auto' else 'detect from the audio'}."
     )
+    if joins:
+        prompt += (" This clip concatenates non-contiguous excerpts of the original audio. "
+            "The following numbers are splice positions in seconds on THIS clip's clock, not dialogue: "
+            + json.dumps(list(joins)) + ". Treat each splice as a discontinuity; do not infer continuity, "
+            "invent connecting words, or join sentences across it. Keep timestamps on the clip clock "
+            "without resetting them at splices. Transcribe audible fragments on each side separately.")
+    return prompt
 
 
 def validate_sentences(items, duration):

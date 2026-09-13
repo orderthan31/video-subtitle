@@ -6,6 +6,7 @@ import threading
 import time
 
 from video_service.capacity import used_bytes, assert_capacity, assert_free_space, StorageLimitError
+from .llm_diagnostics import emit
 
 
 _capacity = ContextVar("worker_capacity", default=None)
@@ -52,6 +53,7 @@ def check_capacity(root, quota, minimum_free, additional=0):
 async def disk_call(function, *args, **kwargs):
     # A cancelled thread cannot be stopped; drain it before releasing job locks.
     task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    started = time.monotonic()
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -62,3 +64,8 @@ async def disk_call(function, *args, **kwargs):
                 continue
         task.result()
         raise
+    finally:
+        elapsed = time.monotonic() - started
+        name = getattr(function, "__name__", "disk_callback")
+        if elapsed >= 1 or name in ("begin_call", "finish_call"):
+            emit("local_io_finished", operation=name, elapsed_seconds=round(elapsed, 3))
