@@ -244,7 +244,7 @@ class GeminiProvider:
             check()
             try:
                 with audio_window(left, right, rate, depth):
-                    items = self.request([{"text": transcription_prompt(language, duration)},
+                    items = self.request([{"text": transcription_prompt(language, duration, allow_overlap=True)},
                         {"inlineData": {"mimeType": "audio/wav",
                             "data": base64.b64encode(buffer.getvalue()).decode("ascii")}}],
                         SENTENCE_SCHEMA, check, self.transcription_model)
@@ -278,6 +278,11 @@ class GeminiProvider:
                 for _, left, right, _ in windows]
             key = hashlib.sha256(json.dumps(["packed-sentence-splices-v3", identity, prompts], sort_keys=True).encode()).hexdigest()
             path = work / "transcription" / f"{key}.json" if work is not None else None
+
+        # Keep legacy checkpoint keys while updating the instructions sent for new calls.
+        prompts = [prompt.replace("Return chronological, non-overlapping segments",
+            "Return segments ordered by start time; overlapping speech may have overlapping timestamps. Return segments")
+            for prompt in prompts]
 
         def validate(index, result):
             _, left, right, _ = windows[index]

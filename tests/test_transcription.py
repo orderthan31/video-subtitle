@@ -148,7 +148,7 @@ class TranscriptionTests(unittest.TestCase):
         result = provider.transcribe(source, 'en', lambda: None, spans=spans, work=work)
         self.assertEqual([s.text for s in result], ['Saved', 'Remaining'])
         self.assertEqual(provider._request.call_count, 1)
-        self.assertEqual(provider._request.call_args.args[0][0]['text'], transcription_prompt('en', 3))
+        self.assertEqual(provider._request.call_args.args[0][0]['text'], transcription_prompt('en', 3, allow_overlap=True))
         provider._request.reset_mock()
         provider.transcribe(source, 'en', lambda: None, spans=spans, work=work)
         provider._request.assert_not_called()

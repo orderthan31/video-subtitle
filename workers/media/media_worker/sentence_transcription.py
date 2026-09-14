@@ -1,5 +1,6 @@
 import math
 import json
+import logging
 
 
 SCHEMA = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
@@ -7,7 +8,7 @@ SCHEMA = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
 }, "required": ["start", "end", "text"]}}
 
 
-def transcription_prompt(language, duration, joins=()):
+def transcription_prompt(language, duration, joins=(), *, allow_overlap=False):
     prompt = (
         "Transcribe the attached audio into subtitle-ready sentences or natural utterances. "
         "Return JSON objects with start, end, and text. Never split into individual words, "
@@ -32,13 +33,18 @@ def transcription_prompt(language, duration, joins=()):
             + json.dumps(list(joins)) + ". Treat each splice as a discontinuity; do not infer continuity, "
             "invent connecting words, or join sentences across it. Keep timestamps on the clip clock "
             "without resetting them at splices. Transcribe audible fragments on each side separately.")
+    if allow_overlap:
+        prompt = prompt.replace("Return chronological, non-overlapping segments",
+            "Return segments ordered by start time; overlapping speech may have overlapping timestamps. Return segments")
     return prompt
 
 
 def validate_sentences(items, duration):
     if not isinstance(items, list) or len(items) > 1000:
         raise ValueError("STT must return a list of sentence segments")
-    result, previous = [], 0.0
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("Invalid STT audio duration")
+    result = []
     for item in items:
         if not isinstance(item, dict):
             raise ValueError("Invalid STT sentence object")
@@ -46,10 +52,17 @@ def validate_sentences(items, duration):
         if (isinstance(start, bool) or isinstance(end, bool)
                 or not isinstance(start, (float, int)) or not isinstance(end, (float, int))
                 or not math.isfinite(start) or not math.isfinite(end)
-                or not previous <= start < end <= duration + 0.1 or start >= duration):
+                or not 0 <= start < end <= duration + 0.1 or start >= duration):
             raise ValueError("Invalid STT sentence timestamps")
         if not isinstance(text, str) or not text.strip() or len(text) > 4000:
             raise ValueError("Invalid STT sentence text")
-        previous = min(float(end), duration)
-        result.append({"start": float(start), "end": previous, "text": text.strip()})
+        result.append({"start": float(start), "end": min(float(end), duration), "text": text.strip()})
+    result.sort(key=lambda item: item['start'])
+    previous_end = 0.0
+    overlaps = 0
+    for item in result:
+        overlaps += item['start'] < previous_end
+        previous_end = max(previous_end, item['end'])
+    if overlaps:
+        logging.getLogger(__name__).warning("STT overlaps preserved: count=%d duration=%.3f", overlaps, duration)
     return result

@@ -46,18 +46,36 @@ def segment_subtitles(segments: Iterable[TranscriptSegment], *, line_width=42, m
         if not (math.isfinite(segment.start) and math.isfinite(segment.end)
                 and 0 <= segment.start < segment.end):
             raise ValueError("Invalid subtitle time interval")
-        text = " ".join(segment.text.split())
+        text = "\n".join(" ".join(line.split()) for line in segment.text.splitlines() if line.strip())
         if not text:
             continue
-        if normalized and segment.start < normalized[-1].end:
-            previous = normalized.pop()
-            normalized.append(TranscriptSegment(previous.start, max(previous.end, segment.end),
-                previous.text + " " + text))
-        else:
-            normalized.append(segment.with_text(text))
+        normalized.append(segment.with_text(text))
+    # Sweep on the output millisecond clock. Never extend speech across another cue.
+    events = {}
+    for index, segment in enumerate(normalized):
+        first, last = round(segment.start * 1000), round(segment.end * 1000)
+        if last <= first:
+            raise ValueError("Subtitle duration is below SRT millisecond precision")
+        events.setdefault(first, []).append((index, True))
+        events.setdefault(last, []).append((index, False))
+    active = set()
+    intervals = []
+    previous = None
+    for point in sorted(events):
+        if previous is not None and point > previous and active:
+            texts = [normalized[i].text for i in sorted(active)]
+            speaker = normalized[next(iter(active))].speaker if len(active) == 1 else None
+            intervals.append(TranscriptSegment(previous / 1000, point / 1000, "\n".join(texts), speaker))
+        for index, starts in events[point]:
+            if starts:
+                active.add(index)
+            else:
+                active.discard(index)
+        previous = point
     result = []
-    for segment in normalized:
-        lines = textwrap.wrap(segment.text, width=line_width, break_long_words=True, break_on_hyphens=False)
+    for segment in intervals:
+        lines = [line for utterance in segment.text.splitlines()
+                 for line in textwrap.wrap(utterance, width=line_width, break_long_words=True, break_on_hyphens=False)]
         blocks = ["\n".join(lines[index:index+max_lines]) for index in range(0, len(lines), max_lines)]
         weights = [len(block.replace("\n", "")) for block in blocks]
         total = sum(weights)

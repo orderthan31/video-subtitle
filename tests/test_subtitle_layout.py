@@ -27,8 +27,21 @@ class SubtitleLayoutTests(unittest.TestCase):
 
     def test_overlapping_dialogue_keeps_both_texts(self):
         cues = segment_subtitles([TranscriptSegment(2, 5, "Second"), TranscriptSegment(1, 3, "First")])
-        self.assertEqual(cues[0].text, "First Second")
-        self.assertEqual((cues[0].start, cues[0].end), (1, 5))
+        self.assertEqual([(c.start, c.end, c.text) for c in cues],
+                         [(1, 2, 'First'), (2, 3, 'First\nSecond'), (3, 5, 'Second')])
+
+    def test_nested_overlap_and_touching_boundaries(self):
+        cues = segment_subtitles([TranscriptSegment(0, 5, 'A'),
+            TranscriptSegment(1, 2, 'B'), TranscriptSegment(2, 3, 'C')])
+        self.assertEqual([(c.start, c.end, c.text) for c in cues],
+            [(0, 1, 'A'), (1, 2, 'A\nB'), (2, 3, 'A\nC'), (3, 5, 'A')])
+
+    def test_real_overlap_boundaries_and_repeat_layout(self):
+        cues = segment_subtitles([TranscriptSegment(54.34, 57.17, 'First'),
+                                  TranscriptSegment(56.45, 57.5, 'Second')])
+        self.assertEqual([(c.start, c.end, c.text) for c in cues],
+            [(54.34, 56.45, 'First'), (56.45, 57.17, 'First\nSecond'), (57.17, 57.5, 'Second')])
+        self.assertEqual([c.to_dict() for c in segment_subtitles(cues)], [c.to_dict() for c in cues])
 
     def test_invalid_times_rejected(self):
         for start, end in [(float('nan'), 1), (0, float('inf')), (-1, 2), (2, 1)]:

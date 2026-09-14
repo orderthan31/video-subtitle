@@ -38,6 +38,9 @@ export const SubtitleEditor = ({
   const modal = useRef<HTMLDialogElement>(null);
   const cues = draft?.tracks[track] || [],
     pages = Math.max(1, Math.ceil(cues.length / pageSize));
+  const reviewCount = cues.filter(
+    (cue) => cue.end - cue.start < 1 || cue.text.split('\n').length > 2,
+  ).length;
   const update = (index: number, changes: Partial<Cue>) => {
     setDraft(
       (value) =>
@@ -223,6 +226,11 @@ export const SubtitleEditor = ({
         {error && (
           <p className="alert" role="alert">
             {error}
+          </p>
+        )}
+        {reviewCount > 0 && (
+          <p className="alert" role="status">
+            표시 시간이 짧거나 줄 수가 많은 자막 {reviewCount}개: 검토 필요
           </p>
         )}
         {completed && (
