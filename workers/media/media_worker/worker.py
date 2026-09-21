@@ -26,6 +26,7 @@ from .providers import GeminiProvider
 from .llm_trace import capture_calls
 from .checkpoints import Checkpoints
 from .completed_transcript import transcript_identity, load_completed_transcript, save_completed_transcript
+from .content_block import block_details, BLOCKED_TEXT
 from .sentence_transcription import transcription_prompt
 from .transcription_queue import PartialTranscriptionError, PartialTranslationError
 from .cleanup import collect_orphans
@@ -78,7 +79,7 @@ class Worker:
                 record = repo.read(job_id)
                 if record.status != JobStatus.QUEUED:
                     return
-                repo.update_status(job_id, JobStatus.ANALYZING)
+                repo.update_status(job_id, JobStatus.ANALYZING, metadata={"failure": None})
             last_heartbeat = 0
             last_progress = 0
             progress_path = None
@@ -160,6 +161,8 @@ class Worker:
                     int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
                     int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), check)
                 languages = [record.options.target_language, *record.options.additional_languages]
+                needs_review = False
+                has_blocks = False
                 if 'translate' not in stages and not ('encode' in stages and selected is not None):
                     languages = []
                 if record.metadata.get("review_ready"):
@@ -221,6 +224,7 @@ class Worker:
                             with wait_for_job_lock(repo, job_id, check=check):
                                 current = repo.read(job_id)
                                 current.metadata["transcription_progress"] = value
+                                current.metadata["transcription_blocks"] = value.get("content_blocks", [])
                                 current.metadata["stage_progress"] = value["completed"] / value["total"] if value["total"] else 1
                                 current.status_message = "진행 중 요청 회수 중" if value["draining"] else "음성 전사 중"
                                 repo.save(current)
@@ -258,6 +262,7 @@ class Worker:
                             with wait_for_job_lock(repo, job_id, check=check):
                                 current = repo.read(job_id)
                                 current.metadata["translation_progress"] = {**value, "language": language}
+                                current.metadata.setdefault("translation_blocks", {})[language] = value.get("content_blocks", [])
                                 current.metadata["stage_progress"] = value["completed"] / value["total"] if value["total"] else 1
                                 current.status_message = "진행 중 번역 요청 회수 중" if value["draining"] else "자막 번역 중"
                                 repo.save(current)
@@ -276,16 +281,15 @@ class Worker:
                         write_json_atomic(work / f"{stem}.json", [s.to_dict() for s in translated])
                         subtitle_sets[stem] = segment_subtitles(translated,
                             line_width=24 if language.split("-")[0] in {"ko", "ja", "zh"} else 42)
-                    if record.options.review_subtitles and 'encode' in stages:
+                    has_blocks = any(BLOCKED_TEXT in cue.text for cues in subtitle_sets.values() for cue in cues)
+                    if (record.options.review_subtitles or has_blocks) and 'encode' in stages:
+                        needs_review = True
                         with wait_for_job_lock(repo, "0" * 32, check=check):
                             write_draft(repo, record, {name: [cue.to_dict() for cue in cues]
                                 for name, cues in subtitle_sets.items()}, metadata["duration"], 1,
                                 capacity_check=lambda size: assert_capacity(repo.storage_root,
                                     int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
                                     int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size))
-                        self.transition(job_id, JobStatus.AWAITING_REVIEW,
-                            metadata={"awaiting_review_at": utc_now_iso()})
-                        return
                 self.transition(job_id, JobStatus.GENERATING_SUBTITLE)
                 output = repo.job_dir(job_id) / "output"
                 output.mkdir(exist_ok=True)
@@ -312,6 +316,12 @@ class Worker:
                         validate_cues(original_cues, metadata["duration"])
                     (output / "original.srt").write_text(segments_to_srt(original_cues), encoding="utf-8")
                     result_files.append('original.srt')
+                if needs_review:
+                    self.transition(job_id, JobStatus.AWAITING_REVIEW,
+                        message="차단 구간이 포함되어 인코딩 전 검토가 필요합니다." if has_blocks else None,
+                        metadata={"awaiting_review_at": utc_now_iso(), "content_block_review": has_blocks,
+                                  "result_files": result_files})
+                    return
                 if 'encode' not in stages:
                     self.transition(job_id, JobStatus.COMPLETED, metadata={
                         'duration': metadata['duration'], 'result_files': result_files,
@@ -347,8 +357,12 @@ class Worker:
                 with wait_for_job_lock(repo, job_id):
                     current = repo.read(job_id)
                     cancelled = cancelled or current.metadata.get("cancel_requested", False)
+                    failure = None if cancelled else block_details(exc)
+                    if failure:
+                        failure["stage"] = current.status.value
                     repo.update_status(job_id, JobStatus.CANCELLED if cancelled else JobStatus.FAILED,
-                        error=None if cancelled else str(exc), metadata={"stage_progress": None,
+                        error=None if cancelled else "Gemini 콘텐츠 정책에 의해 차단되었습니다. 자동 재시도를 중단했습니다." if failure else str(exc),
+                        metadata={"stage_progress": None, "failure": failure,
                             "interrupted": isinstance(exc, WorkerStopping),
                             "failed_stage": current.status.value,
                             "cleanup_pending": False, "cleanup_error": None})

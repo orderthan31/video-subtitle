@@ -12,6 +12,8 @@ from media_worker.checkpoints import Checkpoints
 from media_worker.completed_transcript import transcript_identity, load_completed_transcript, save_completed_transcript
 from media_worker.sentence_transcription import transcription_prompt
 from media_worker.worker import Worker
+from media_worker.transcription_queue import PartialTranslationError
+from media_worker.content_block import BLOCKED_TEXT
 from video_service.models import JobStatus, QualityProfile
 from video_service.repository import FilesystemJobRepository
 from video_service.storage import read_json, write_json_atomic
@@ -112,3 +114,41 @@ class CompletedTranscriptTests(unittest.TestCase):
             write_json_atomic(self.work / "transcript.json", self.cues)
             recover(self.repo, self.record.job_id, "old", True)
         self.assertEqual(load_completed_transcript(self.work, self.identity), self.cues)
+
+    def test_block_metadata_reaches_job_and_is_cleared_on_retry(self):
+        save_completed_transcript(self.work, self.identity, self.cues, "old")
+        error = PartialTranslationError({}, [3])
+        error.content_blocks = [{"segment": 4, "reason": "PROHIBITED_CONTENT"}]
+        provider = Mock(transcription_model="new", translation_model="new", audio_filter_model="new")
+        provider.translate.side_effect = [error, RuntimeError("network failure")]
+        metadata = {"duration": 20, "streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}
+        with patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"), \
+                patch("media_worker.worker.probe", return_value=metadata):
+            self.repo.update_status(self.record.job_id, JobStatus.QUEUED)
+            Worker(self.repo, provider).process(self.record.job_id)
+            job = self.repo.read(self.record.job_id)
+            self.assertEqual(job.metadata["failure"], {"kind": "content_blocked", "provider": "Gemini",
+                "stage": "TRANSLATING", "blocks": error.content_blocks})
+            self.assertIn("Gemini", job.error)
+            self.repo.update_status(self.record.job_id, JobStatus.QUEUED)
+            Worker(self.repo, provider).process(self.record.job_id)
+            self.assertIsNone(self.repo.read(self.record.job_id).metadata["failure"])
+        provider.transcribe.assert_not_called()
+
+    def test_placeholder_finishes_subtitles_and_pauses_before_encoding_without_review_option(self):
+        save_completed_transcript(self.work, self.identity, self.cues, "old")
+        provider = Mock(transcription_model="new", translation_model="new", audio_filter_model="new")
+        provider.translate.return_value = [TranscriptSegment(12, 13, BLOCKED_TEXT)]
+        metadata = {"duration": 20, "streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}
+        self.assertFalse(self.record.options.review_subtitles)
+        with patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"), \
+                patch("media_worker.worker.probe", return_value=metadata), \
+                patch("media_worker.worker.run_process") as encode:
+            self.repo.update_status(self.record.job_id, JobStatus.QUEUED)
+            Worker(self.repo, provider).process(self.record.job_id)
+        job = self.repo.read(self.record.job_id)
+        self.assertEqual(job.status, JobStatus.AWAITING_REVIEW, job.error)
+        self.assertTrue(job.metadata['content_block_review'])
+        encode.assert_not_called()
+        self.assertIn(BLOCKED_TEXT, (self.work.parent / 'output/translated.srt').read_text(encoding='utf-8'))
+        self.assertTrue((self.work / 'subtitle-draft.json').exists())

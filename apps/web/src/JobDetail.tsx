@@ -15,6 +15,7 @@ import {
 import { base, Job, request } from './api';
 import { VideoAsset } from './video-api';
 import { StageProgress } from './StageProgress';
+import { failureMessage, isContentBlocked } from './job-failure';
 import { SubtitleEditor } from './SubtitleEditor';
 import './job-detail.css';
 type Cue = {
@@ -179,12 +180,20 @@ export const JobDetail = ({
       {job && (
         <div className="detail-stage">
           <span className={'status ' + job.status.toLowerCase()}>
-            {labels[job.status] || job.status}
+            {job.status === 'AWAITING_REVIEW' && job.metadata.content_block_review
+              ? '차단 구간 검토'
+              : isContentBlocked(job)
+                ? '콘텐츠 차단'
+                : labels[job.status] || job.status}
           </span>
           <StageProgress job={job} />
         </div>
       )}
-      {job?.error && <p className="alert">{job.error}</p>}
+      {job && failureMessage(job) && (
+        <p className="alert" role="alert">
+          {failureMessage(job)}
+        </p>
+      )}
       <div className="detail-panels">
         <section className="media-panel" aria-label="영상">
           <div className="panel-heading">

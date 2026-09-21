@@ -26,6 +26,7 @@ from video_service.storage import read_json, write_json_atomic
 from .translation_inputs import translation_groups
 from .translation_requests import requests as translation_requests, align_result, SCHEMA as TRANSLATION_SCHEMA
 from .llm_diagnostics import emit, exception_details, attempt_context, new_context
+from .content_block import check_content_block, BLOCKED_TEXT
 
 
 REQUEST_DEADLINE_SECONDS = 125
@@ -192,6 +193,7 @@ class GeminiProvider:
                 except ValueError:
                     emit("response_validation_failed", category="remote_output_invalid_json", status=response.status_code)
                     raise
+                check_content_block(data)
                 candidates = data.get("candidates", [])
                 if not candidates or candidates[0].get("finishReason") != "STOP":
                     emit("response_validation_failed", category="remote_output_incomplete_or_blocked", status=response.status_code)
@@ -312,6 +314,8 @@ class GeminiProvider:
 
         try:
             results = asyncio.run(run_transcription_queue(len(windows), operation, check, progress,
+                blocked_result=lambda index: [{"start": 0, "end": (windows[index][2] - windows[index][1]) / rate,
+                                               "text": BLOCKED_TEXT}],
                 path=path, validate=validate, operation_timeout=None, before_write=lambda size: assert_capacity(work.parents[1],
                     int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
                     int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size)))
@@ -327,6 +331,20 @@ class GeminiProvider:
         return segments(results)
 
     def translate(self, segments, language, check, *, work=None, progress=lambda value: None, video_description=""):
+        placeholders = [s for s in segments if s.text == BLOCKED_TEXT]
+        if placeholders:
+            remaining = [s for s in segments if s.text != BLOCKED_TEXT]
+            if not remaining:
+                progress({"total": 0, "completed": 0, "in_flight": 0, "retrying": 0,
+                          "failed": 0, "draining": False, "content_blocks": []})
+                return segments
+            try:
+                translated = self.translate(remaining, language, check, work=work, progress=progress,
+                                            video_description=video_description)
+            except PartialTranslationError as exc:
+                exc.segments = sorted([*exc.segments, *placeholders], key=lambda s: s.start)
+                raise
+            return sorted([*translated, *placeholders], key=lambda s: s.start)
         schema = {"type": "ARRAY", "items": {"type": "STRING"}}
         context = ""
         if video_description.strip():
@@ -404,6 +422,7 @@ class GeminiProvider:
             results = asyncio.run(run_segment_queue(len(batches), operation, check,
                 lambda value: progress({**value, **stats}), path=path,
                 validate=validate, failure_type=PartialTranslationError, operation_timeout=None,
+                blocked_result=lambda index: [BLOCKED_TEXT] * len(batches[index]),
                 before_write=lambda size: assert_capacity(work.parents[1],
                     int(os.getenv("VIDEO_SERVICE_QUOTA_BYTES", str(300 * 1024**3))),
                     int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size)))

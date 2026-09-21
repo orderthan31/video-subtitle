@@ -17,6 +17,7 @@ import {
 import { base, Job, request, resumeUpload, uploadRequest } from './api';
 import { AccountMenu } from './AuthGate';
 import { JobDetail } from './JobDetail';
+import { failureMessage, isContentBlocked } from './job-failure';
 import { StageProgress } from './StageProgress';
 import { SubtitleEditor } from './SubtitleEditor';
 import { UploadItem, UploadQueue } from './upload-queue';
@@ -213,9 +214,17 @@ export const VideoWorkspace = () => {
                 {new Date(job.created_at).toLocaleString('ko-KR')}
               </p>
               <span className={'status ' + job.status.toLowerCase()}>
-                {statusLabels[job.status] || job.status}
+                {job.status === 'AWAITING_REVIEW' && job.metadata.content_block_review
+                  ? '차단 구간 검토'
+                  : isContentBlocked(job)
+                    ? '콘텐츠 차단'
+                    : statusLabels[job.status] || job.status}
               </span>
-              {job.error && <p className="alert">{job.error}</p>}
+              {failureMessage(job) && (
+                <p className="alert" role="alert">
+                  {failureMessage(job)}
+                </p>
+              )}
             </div>
             <div className="row-actions">
               {job.status === 'UPLOADING' && (

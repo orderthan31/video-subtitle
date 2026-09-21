@@ -7,6 +7,7 @@ from video_service.storage import read_json, write_json_atomic
 from video_service.capacity import StorageLimitError
 from .llm_diagnostics import attempt_context, new_context, emit, exception_details
 from .worker_storage import disk_call
+from .content_block import ContentBlockedError
 
 
 class RetryableTranscriptionError(Exception):
@@ -33,9 +34,10 @@ class PartialTranslationError(PartialTranscriptionError):
 
 async def run_segment_queue(count, operation, check, progress, *, path=None, before_write=None,
                             validate=lambda index, result: result, concurrency=3, attempts=3,
-                            failure_type=PartialTranscriptionError, operation_timeout=125):
+                            failure_type=PartialTranscriptionError, operation_timeout=125, blocked_result=None):
     results = {}
     history = []
+    saved_blocks = []
     if path is not None:
         try:
             saved = read_json(path)
@@ -50,6 +52,7 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
                             results[index] = validate(index, result)
                         except (ValueError, TypeError, KeyError):
                             pass
+                saved_blocks = [b for b in saved.get("content_blocks", []) if b["segment"] - 1 in results]
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             results = {}
             history = []
@@ -58,6 +61,7 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
     retries = {}
     counts = {}
     failed = []
+    content_blocks = saved_blocks
     halted = False
     cooldown = 0
     diagnostics = {}
@@ -75,10 +79,12 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
 
     async def publish():
         snapshot = {"total": count, "completed": len(results), "in_flight": len(running),
-                    "retrying": len(retries), "failed": len(failed), "draining": halted and bool(running)}
+                    "retrying": len(retries), "failed": len(failed), "draining": halted and bool(running),
+                    "content_blocks": list(content_blocks)}
         if path is not None:
             await disk_call(write_json_atomic, path, {"count": count, "results": {str(k): v for k, v in results.items()},
-                "failed": failed, "attempts": counts, "history": history, "progress": snapshot},
+                "failed": failed, "content_blocks": content_blocks,
+                "attempts": counts, "history": history, "progress": snapshot},
                 before_write=before_write)
         await disk_call(progress, snapshot)
 
@@ -137,6 +143,15 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
                     validating = True
                     results[index] = validate(index, result)
                     record(index, "success", retryable=False)
+                except ContentBlockedError as exc:
+                    content_blocks.append({"segment": index + 1, "reason": exc.reason})
+                    record(index, type(exc).__name__, retryable=False, retry_scheduled=False,
+                        category="remote_content_blocked", block_reason=exc.reason, failure_phase="operation")
+                    if blocked_result is None:
+                        failed.append(index)
+                        halted = True
+                    else:
+                        results[index] = validate(index, blocked_result(index))
                 except StorageLimitError as exc:
                     record(index, type(exc).__name__, retryable=False, retry_scheduled=False,
                         category="local_storage_limit", failure_phase="storage")
@@ -166,7 +181,9 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
             if done:
                 await publish()
         if failed:
-            raise failure_type(results, sorted(failed))
+            error = failure_type(results, sorted(failed))
+            error.content_blocks = sorted(content_blocks, key=lambda item: item["segment"])
+            raise error
         return results
     finally:
         for task in running:

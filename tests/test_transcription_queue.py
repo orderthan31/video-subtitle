@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.transcription_queue import run_transcription_queue, PartialTranscriptionError, RetryableTranscriptionError
 from video_service.storage import read_json
+from media_worker.content_block import ContentBlockedError
+from media_worker.transcription_queue import PartialTranslationError
 
 
 class TranscriptionQueueTests(unittest.IsolatedAsyncioTestCase):
@@ -86,6 +88,49 @@ class TranscriptionQueueTests(unittest.IsolatedAsyncioTestCase):
             await run_transcription_queue(9, operation, lambda: None, lambda value: None, path=self.path)
         self.assertEqual(sorted(error.exception.results), [1, 2])
         self.assertEqual(read_json(self.path)["attempts"]["0"], 1)
+
+    async def test_content_block_stops_admission_and_drains_for_both_stages(self):
+        for failure_type in (PartialTranscriptionError, PartialTranslationError):
+            path = self.root / (failure_type.__name__ + '.json')
+            calls = []
+            async def operation(index, attempt):
+                calls.append((index, attempt))
+                if index == 0:
+                    raise ContentBlockedError("PROHIBITED_CONTENT")
+                await asyncio.sleep(.03)
+                return [index]
+            with self.assertRaises(failure_type) as error:
+                await run_transcription_queue(9, operation, lambda: None, lambda value: None,
+                    path=path, failure_type=failure_type)
+            self.assertEqual(calls, [(0, 1), (1, 1), (2, 1)])
+            self.assertEqual(sorted(error.exception.results), [1, 2])
+            self.assertEqual(error.exception.content_blocks, [{"segment": 1, "reason": "PROHIBITED_CONTENT"}])
+            saved = read_json(path)
+            self.assertEqual(saved['content_blocks'], error.exception.content_blocks)
+            blocked = saved['history'][0]['diagnostics']['events'][-1]
+            self.assertFalse(blocked['retry_scheduled'])
+            self.assertEqual(blocked['category'], 'remote_content_blocked')
+
+    async def test_placeholder_policy_continues_and_resume_keeps_blocks_without_calls(self):
+        calls = []
+        async def operation(index, attempt):
+            calls.append((index, attempt))
+            if index == 0:
+                raise ContentBlockedError('PROHIBITED_CONTENT')
+            return [index]
+        snapshots = []
+        result = await run_transcription_queue(6, operation, lambda: None, snapshots.append,
+            path=self.path, blocked_result=lambda index: ['blocked'])
+        self.assertEqual(len(result), 6)
+        self.assertEqual(result[0], ['blocked'])
+        self.assertEqual(len(calls), 6)
+        self.assertEqual(snapshots[-1]['content_blocks'], [{'segment': 1, 'reason': 'PROHIBITED_CONTENT'}])
+        self.assertEqual(snapshots[-1]['failed'], 0)
+        calls.clear()
+        await run_transcription_queue(6, operation, lambda: None, snapshots.append,
+            path=self.path, blocked_result=lambda index: ['blocked'])
+        self.assertEqual(calls, [])
+        self.assertEqual(len(snapshots[-1]['content_blocks']), 1)
 
     async def test_cancel_cancels_inflight_without_leaking_tasks(self):
         started = asyncio.Event()

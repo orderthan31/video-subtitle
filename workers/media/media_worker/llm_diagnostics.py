@@ -9,6 +9,7 @@ import time
 from uuid import uuid4
 
 import httpx
+from .content_block import ContentBlockedError
 
 
 attempt_context = ContextVar("llm_attempt_diagnostics", default=None)
@@ -45,6 +46,8 @@ def exception_details(error):
         "Translation output IDs do not match input targets": "translation_output_ids",
     }
     details = {"category": category, "exception_chain": chain}
+    if isinstance(error, ContentBlockedError):
+        details.update(category="remote_content_blocked", block_reason=error.reason)
     if isinstance(error, ValueError) and str(error) in reasons:
         details.update(category="output_rejected_by_local_validator", reason=reasons[str(error)])
     return details

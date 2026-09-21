@@ -29,6 +29,15 @@ export type Job = {
     stage_progress?: number | null;
     result_files?: string[];
     failed_stage?: string;
+    content_block_review?: boolean;
+    transcription_blocks?: { segment: number; reason: string }[];
+    translation_blocks?: Record<string, { segment: number; reason: string }[]>;
+    failure?: {
+      kind: 'content_blocked';
+      provider: string;
+      stage: string;
+      blocks: { segment?: number; reason: string }[];
+    } | null;
     asset_id?: string;
     workflow?: {
       template: string;

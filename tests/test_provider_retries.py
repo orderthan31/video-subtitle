@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "workers/media"), str(ROOT / "packages/shared")]
 from media_worker.providers import GeminiProvider, retry_delay
 from media_worker.transcription_queue import RetryableTranscriptionError
+from media_worker.content_block import ContentBlockedError
 from media_worker.process import Cancelled
 from media_worker.llm_trace import capture_calls, audio_window
 from sdk_fixture import sdk_fixture
@@ -88,6 +89,23 @@ class ProviderRetryTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "HTTP 401"):
             await self.request()
         self.assertEqual(self.client.post.call_count, 1)
+
+    async def test_content_blocks_are_explicit_and_never_retried(self):
+        for body, reason in [
+            ({"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}}, "PROHIBITED_CONTENT"),
+            ({"candidates": [{"finishReason": "SAFETY"}]}, "SAFETY"),
+        ]:
+            self.client.post.reset_mock()
+            self.client.post.return_value = httpx.Response(200, json=body)
+            with self.assertRaises(ContentBlockedError) as error:
+                await self.request()
+            self.assertEqual(error.exception.reason, reason)
+            self.assertEqual(self.client.post.call_count, 1)
+
+    async def test_token_limit_is_not_misclassified_as_content_block(self):
+        self.client.post.return_value = httpx.Response(200, json={"candidates": [{"finishReason": "MAX_TOKENS"}]})
+        with self.assertRaises(ValueError):
+            await self.request()
 
     async def test_parallel_attempt_has_no_nested_transport_retries(self):
         self.client.post.return_value = httpx.Response(429, headers={"Retry-After": "2"})
