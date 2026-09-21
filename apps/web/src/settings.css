@@ -1,0 +1,86 @@
+.settings-page {
+  max-width: 880px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.settings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-heading h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 24px;
+}
+.settings-page fieldset {
+  border: 0;
+  border-bottom: 1px solid #e5e8eb;
+  margin: 24px 0;
+  padding: 0 0 24px;
+  min-width: 0;
+}
+.settings-page legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 18px;
+}
+.settings-page label {
+  display: grid;
+  gap: 9px;
+  font-size: 14px;
+  min-width: 0;
+}
+.settings-page input:not([type='checkbox']) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid #b0b8c1;
+  border-radius: 6px;
+  color: #191f28;
+  background: #fff;
+  font: inherit;
+}
+.settings-model-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px 20px;
+  margin-top: 20px;
+}
+.settings-key-row {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+.settings-key-row label {
+  flex: 1;
+}
+.settings-page .settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 15px 0;
+}
+.settings-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #3182f6;
+}
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.settings-page .key-status {
+  color: #4e5968;
+  font-size: 14px;
+}
+@media (max-width: 640px) {
+  .settings-model-grid {
+    grid-template-columns: 1fr;
+  }
+}

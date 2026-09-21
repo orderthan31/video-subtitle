@@ -32,6 +32,7 @@ from .transcription_queue import PartialTranscriptionError, PartialTranslationEr
 from .cleanup import collect_orphans
 from .progress import encoding_progress
 from video_service.config import load_environment
+from video_service.llm_settings import LLMSettingsStore
 from video_service.capacity import reserve_workspace
 from .worker_storage import check_capacity as assert_capacity
 from .shutdown import shutdown_signals, WorkerStopping
@@ -39,10 +40,11 @@ from .validation import validate_cues, validate_output, validate_decodable
 
 
 class Worker:
-    def __init__(self, repository, provider, stop=None):
+    def __init__(self, repository, provider, stop=None, provider_factory=None):
         self.repository = repository
         self.provider = provider
         self.stop = stop if stop is not None else Event()
+        self.provider_factory = provider_factory
 
     def check_stopping(self):
         if self.stop.is_set():
@@ -114,6 +116,15 @@ class Worker:
                         pass
 
             try:
+                if self.provider_factory is not None:
+                    self.provider = self.provider_factory(record.metadata.get('owner_id'))
+                    preferences = getattr(self.provider, 'preferences', {})
+                    with wait_for_job_lock(repo, job_id, check=check):
+                        current = repo.read(job_id)
+                        current.metadata['llm_settings'] = {key: preferences[key] for key in (
+                            'transcription_model', 'translation_model', 'transcription_fallback_model',
+                            'translation_fallback_model', 'fallback_on_error', 'fallback_on_block', 'revision') if key in preferences}
+                        repo.save(current)
                 work = repo.job_dir(job_id) / "work"
                 work.mkdir(exist_ok=True)
                 workflow = record.metadata.get('workflow', {})
@@ -468,7 +479,8 @@ def main():
     load_environment()
     logging.basicConfig(level=logging.INFO)
     repo = FilesystemJobRepository(Path(os.getenv("VIDEO_STORAGE_ROOT", "data/video-jobs")).resolve())
-    worker = Worker(repo, None if args.collect_only else GeminiProvider())
+    worker = Worker(repo, None, provider_factory=None if args.collect_only else
+                    lambda owner: GeminiProvider(LLMSettingsStore(repo.storage_root).resolve(owner)))
     with shutdown_signals(worker.stop):
         if args.collect_only:
             worker.collect()

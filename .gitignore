@@ -9,6 +9,7 @@ __pycache__/
 .ruff_cache/
 .env
 data/
+.llm-settings/
 .tools/
 .env.*
 !.env.example

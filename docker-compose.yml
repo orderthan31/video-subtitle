@@ -10,6 +10,9 @@ services:
     restart: unless-stopped
     environment: &storage
       VIDEO_STORAGE_ROOT: /data/video-jobs
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_TRANSCRIPTION_MODEL: ${GEMINI_TRANSCRIPTION_MODEL:-gemini-3.8-flash}
+      GEMINI_TRANSLATION_MODEL: ${GEMINI_TRANSLATION_MODEL:-gemini-3.8-flash}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10737418240}
       VIDEO_SERVICE_QUOTA_BYTES: ${VIDEO_SERVICE_QUOTA_BYTES:-322122547200}
       MIN_FREE_SPACE_BYTES: ${MIN_FREE_SPACE_BYTES:-53687091200}
@@ -36,7 +39,7 @@ services:
     stop_grace_period: 60s
     environment:
       <<: *storage
-      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in the root .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       PAID_LLM_ENABLED: ${PAID_LLM_ENABLED:-false}
       GEMINI_TRANSCRIPTION_MODEL: ${GEMINI_TRANSCRIPTION_MODEL:-gemini-3.8-flash}
       GEMINI_TRANSLATION_MODEL: ${GEMINI_TRANSLATION_MODEL:-gemini-3.8-flash}

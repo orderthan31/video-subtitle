@@ -10,6 +10,7 @@ import {
   Play,
   Plus,
   Search,
+  Settings,
   Trash2,
   Upload,
   X,
@@ -17,6 +18,7 @@ import {
 import { base, Job, request, resumeUpload, uploadRequest } from './api';
 import { AccountMenu } from './AuthGate';
 import { JobDetail } from './JobDetail';
+import { SettingsPage } from './SettingsPage';
 import { failureMessage, isContentBlocked } from './job-failure';
 import { StageProgress } from './StageProgress';
 import { SubtitleEditor } from './SubtitleEditor';
@@ -101,6 +103,7 @@ export const VideoWorkspace = () => {
   const assetId = route.match(/^#\/videos\/([a-f0-9]{32})$/)?.[1],
     jobId = route.match(/^#\/jobs\/([a-f0-9]{32})$/)?.[1];
   const jobsView = route === '#/jobs';
+  const settingsView = route === '#/settings';
   const shownVideos = videos.filter((v) =>
     v.original_filename.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
   );
@@ -479,13 +482,17 @@ export const VideoWorkspace = () => {
               영상 업로드
             </button>
             <nav>
-              <a href="#/" aria-current={!jobsView && !jobId ? 'page' : undefined}>
+              <a href="#/" aria-current={!jobsView && !jobId && !settingsView ? 'page' : undefined}>
                 <FolderOpen size={19} />
                 원본 보관함<span>{videos.length}</span>
               </a>
               <a href="#/jobs" aria-current={jobsView || jobId ? 'page' : undefined}>
                 <ListVideo size={19} />
                 전체 작업<span>{jobs.length}</span>
+              </a>
+              <a href="#/settings" aria-current={settingsView ? 'page' : undefined}>
+                <Settings size={19} />
+                설정
               </a>
             </nav>
           </aside>
@@ -505,7 +512,9 @@ export const VideoWorkspace = () => {
         hidden
         onChange={(e) => void attachSrt(e.target.files?.[0])}
       />
-      {jobId ? (
+      {settingsView ? (
+        <SettingsPage />
+      ) : jobId ? (
         <JobDetail
           id={jobId}
           key={jobId}

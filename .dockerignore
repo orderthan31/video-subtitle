@@ -16,3 +16,4 @@ data
 **/.pytest_cache
 **/coverage
 **/.vite
+**/.llm-settings

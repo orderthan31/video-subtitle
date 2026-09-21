@@ -26,19 +26,28 @@ from video_service.storage import read_json, write_json_atomic
 from .translation_inputs import translation_groups
 from .translation_requests import requests as translation_requests, align_result, SCHEMA as TRANSLATION_SCHEMA
 from .llm_diagnostics import emit, exception_details, attempt_context, new_context
-from .content_block import check_content_block, BLOCKED_TEXT
+from .content_block import check_content_block, BLOCKED_TEXT, ContentBlockedError
 
 
 REQUEST_DEADLINE_SECONDS = 125
 
 
+class ModelRequestError(RuntimeError):
+    pass
+
+
 class GeminiProvider:
-    def __init__(self):
+    def __init__(self, preferences=None):
         load_environment()
+        preferences = preferences or {}
         self.key = os.getenv("GEMINI_API_KEY", "")
         self.transcription_model = os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-3.8-flash")
         self.translation_model = os.getenv("GEMINI_TRANSLATION_MODEL", "gemini-3.8-flash")
         self.audio_filter_model = os.getenv("GEMINI_AUDIO_FILTER_MODEL", self.translation_model)
+        self.key = preferences.get('api_key', self.key)
+        self.transcription_model = preferences.get('transcription_model', self.transcription_model)
+        self.translation_model = preferences.get('translation_model', self.translation_model)
+        self.preferences = preferences
         if not self.key or not all(re.fullmatch(r"[a-zA-Z0-9_.-]+", model) for model in (self.transcription_model, self.translation_model, self.audio_filter_model)):
             raise ValueError("Set GEMINI_API_KEY and valid transcription/translation model names")
 
@@ -58,6 +67,37 @@ class GeminiProvider:
                 sdk.close()
 
     async def _request(self, parts, schema, check, model, transcription_config=None, *, max_attempts=3, trace_attempt=None):
+        preferences = getattr(self, 'preferences', {})
+        context = attempt_context.get()
+        stage = context['identity'].get('stage') if context else None
+        fallback = preferences.get(f'{stage}_fallback_model') if stage in {'transcription', 'translation'} else None
+        identity = context['identity'] if context else {}
+        slot = (identity.get('job_id'), identity.get('queue_id'), stage, identity.get('segment'))
+        if not hasattr(self, '_fallback_active'):
+            self._fallback_active = set()
+        if fallback == model:
+            fallback = None
+        # The segment queue owns the retry budget. Once it retries a failed
+        # primary, keep subsequent attempts on the fallback, not both models.
+        if fallback and (slot in self._fallback_active or (preferences.get('fallback_on_error') and (trace_attempt or 1) > 1)):
+            emit('fallback_selected', primary_model=model, fallback_model=fallback, reason='retry')
+            return await self._request_once(parts, schema, check, fallback, transcription_config,
+                max_attempts=1, trace_attempt=trace_attempt)
+        try:
+            return await self._request_once(parts, schema, check, model, transcription_config,
+                max_attempts=max_attempts, trace_attempt=trace_attempt)
+        except (ContentBlockedError, RetryableTranscriptionError, ModelRequestError, TimeoutError, httpx.TransportError, ValueError) as error:
+            policy = 'fallback_on_block' if isinstance(error, ContentBlockedError) else 'fallback_on_error'
+            if not fallback or not preferences.get(policy):
+                raise
+            self._fallback_active.add(slot)
+            check()
+            emit('fallback_selected', primary_model=model, fallback_model=fallback,
+                reason='content_blocked' if isinstance(error, ContentBlockedError) else 'request_error')
+            return await self._request_once(parts, schema, check, fallback, transcription_config,
+                max_attempts=1, trace_attempt=trace_attempt)
+
+    async def _request_once(self, parts, schema, check, model, transcription_config=None, *, max_attempts=3, trace_attempt=None):
         token = None
         if attempt_context.get() is None:
             token = attempt_context.set(new_context(model=model))
@@ -187,7 +227,8 @@ class GeminiProvider:
                     await wait_for_retry(delay, check)
                     continue
                 if response.is_error:
-                    raise RuntimeError(f"Gemini request failed (HTTP {response.status_code})")
+                    error_type = RuntimeError if response.status_code in (401, 403) else ModelRequestError
+                    raise error_type(f"Gemini request failed (HTTP {response.status_code})")
                 try:
                     data = response.json()
                 except ValueError:
