@@ -25,6 +25,7 @@ from .process import run_process, Cancelled
 from .providers import GeminiProvider
 from .llm_trace import capture_calls
 from .checkpoints import Checkpoints
+from .completed_transcript import transcript_identity, load_completed_transcript, save_completed_transcript
 from .sentence_transcription import transcription_prompt
 from .transcription_queue import PartialTranscriptionError, PartialTranslationError
 from .cleanup import collect_orphans
@@ -171,7 +172,14 @@ class Worker:
                         for name in ['transcript', 'translated']:
                             write_json_atomic(work / (name + '.json'), [s.to_dict() for s in selected])
                 else:
-                    if 'transcribe' in stages or 'extract_audio' in stages:
+                    completed_identity = transcript_identity(source, record)
+                    completed = load_completed_transcript(work, completed_identity) if 'transcribe' in stages else None
+                    if completed is not None:
+                        segments = [TranscriptSegment.from_dict(item) for item in completed]
+                        write_json_atomic(work / "transcript.json", completed)
+                        self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT, metadata={
+                            "transcription_reused": True, "transcription_progress": None})
+                    elif 'transcribe' in stages or 'extract_audio' in stages:
                         if selected_audio is None:
                             self.transition(job_id, JobStatus.EXTRACTING_AUDIO)
                             audio = work / checkpoints.run("extract", lambda: extract_audio(source, work, check).name,
@@ -233,6 +241,8 @@ class Worker:
                         segments = restore_segments(segments, spans, work / "cross-boundary.json")
                         self.transition(job_id, JobStatus.FILTERING_TRANSCRIPT)
                         segments = filter_transcript_segments(segments, record.options.audio_filter)
+                        save_completed_transcript(work, completed_identity, [s.to_dict() for s in segments],
+                            getattr(self.provider, "transcription_model", None), checkpoints.before_write)
                         write_json_atomic(work / "transcript.json", [s.to_dict() for s in segments])
                     else:
                         segments = selected

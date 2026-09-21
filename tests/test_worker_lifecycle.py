@@ -224,6 +224,7 @@ class WorkerLifecycleTests(unittest.TestCase):
         record = self.repo.read(self.job)
         self.assertEqual(record.status, JobStatus.FAILED)
         self.assertEqual(record.metadata["transcription_progress"]["completed"], 2)
+        self.assertFalse((audio.parent / "completed-transcript.json").exists())
         self.assertIn("First.", (audio.parent / "partial-original.srt").read_text(encoding="utf-8"))
         self.assertNotIn("Later.", (audio.parent / "partial-original.srt").read_text(encoding="utf-8"))
         self.assertIn("Later.", (audio.parent / "partial-transcript.json").read_text(encoding="utf-8"))
