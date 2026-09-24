@@ -4,9 +4,10 @@ BLOCKED_TEXT = "차단된 영역입니다"
 
 
 class ContentBlockedError(RuntimeError):
-    def __init__(self, reason):
+    def __init__(self, reason, provider='Gemini'):
         self.reason = reason
-        super().__init__(f"Gemini content blocked ({reason})")
+        self.provider = provider
+        super().__init__(f"{provider} content blocked ({reason})")
 
 
 def check_content_block(data):
@@ -23,5 +24,6 @@ def check_content_block(data):
 def block_details(error):
     blocks = getattr(error, "content_blocks", [])
     if isinstance(error, ContentBlockedError):
-        blocks = [{"reason": error.reason}]
-    return {"kind": "content_blocked", "provider": "Gemini", "blocks": blocks} if blocks else None
+        blocks = [{"reason": error.reason, "provider": error.provider}]
+    providers = sorted({block.get('provider', 'Gemini') for block in blocks})
+    return {"kind": "content_blocked", "provider": ', '.join(providers), "blocks": blocks} if blocks else None

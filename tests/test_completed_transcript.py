@@ -64,7 +64,7 @@ class CompletedTranscriptTests(unittest.TestCase):
         self.assertEqual(load_completed_transcript(self.work, self.identity), [])
 
     def test_retry_after_translation_failure_skips_stt_with_new_models(self):
-        provider = Mock(transcription_model="old", translation_model="old", audio_filter_model="old")
+        provider = Mock(transcription_model="old", translation_model="old", translation_identity="old", audio_filter_model="old")
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Speech")]
         provider.translate.side_effect = RuntimeError("translation unavailable")
         for name in ("audio.wav", "processed-audio.wav", "timeline-map.json"):
@@ -79,7 +79,7 @@ class CompletedTranscriptTests(unittest.TestCase):
             self.repo.update_status(self.record.job_id, JobStatus.QUEUED)
             Worker(self.repo, provider).process(self.record.job_id)
             self.assertEqual(self.repo.read(self.record.job_id).metadata["failed_stage"], "TRANSLATING")
-            provider.transcription_model = provider.translation_model = provider.audio_filter_model = "new"
+            provider.transcription_model = provider.translation_model = provider.translation_identity = provider.audio_filter_model = "new"
             self.repo.update_status(self.record.job_id, JobStatus.QUEUED)
             Worker(self.repo, provider).process(self.record.job_id)
         provider.transcribe.assert_called_once()
@@ -119,7 +119,7 @@ class CompletedTranscriptTests(unittest.TestCase):
         save_completed_transcript(self.work, self.identity, self.cues, "old")
         error = PartialTranslationError({}, [3])
         error.content_blocks = [{"segment": 4, "reason": "PROHIBITED_CONTENT"}]
-        provider = Mock(transcription_model="new", translation_model="new", audio_filter_model="new")
+        provider = Mock(transcription_model="new", translation_model="new", translation_identity="new", audio_filter_model="new")
         provider.translate.side_effect = [error, RuntimeError("network failure")]
         metadata = {"duration": 20, "streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}
         with patch("media_worker.worker.select_encoder", return_value="hevc_nvenc"), \
@@ -137,7 +137,7 @@ class CompletedTranscriptTests(unittest.TestCase):
 
     def test_placeholder_finishes_subtitles_and_pauses_before_encoding_without_review_option(self):
         save_completed_transcript(self.work, self.identity, self.cues, "old")
-        provider = Mock(transcription_model="new", translation_model="new", audio_filter_model="new")
+        provider = Mock(transcription_model="new", translation_model="new", translation_identity="new", audio_filter_model="new")
         provider.translate.return_value = [TranscriptSegment(12, 13, BLOCKED_TEXT)]
         metadata = {"duration": 20, "streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}
         self.assertFalse(self.record.options.review_subtitles)

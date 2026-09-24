@@ -123,7 +123,8 @@ class Worker:
                         current = repo.read(job_id)
                         current.metadata['llm_settings'] = {key: preferences[key] for key in (
                             'transcription_model', 'translation_model', 'transcription_fallback_model',
-                            'translation_fallback_model', 'fallback_on_error', 'fallback_on_block', 'revision') if key in preferences}
+                            'translation_fallback_model', 'translation_provider', 'translation_fallback_provider',
+                            'fallback_on_error', 'fallback_on_block', 'revision') if key in preferences}
                         repo.save(current)
                 work = repo.job_dir(job_id) / "work"
                 work.mkdir(exist_ok=True)
@@ -132,6 +133,8 @@ class Worker:
                     subtitle_input=bool(record.metadata.get('subtitle_input')),
                     subtitle_mode=record.options.subtitle_mode, audio_input=bool(record.metadata.get('audio_input')))
                 stages = plan['stages']
+                if hasattr(self.provider, 'validate_for_stages'):
+                    self.provider.validate_for_stages(stages)
                 encoder = None
                 if not workflow:
                     with encoding_slot(repo, int(os.getenv('MAX_ENCODING_JOBS', '1')), check):
@@ -155,7 +158,7 @@ class Worker:
                         if (key != "video_description" or value) and (key != "vad_mode" or value != "off")},
                     "stt": getattr(self.provider, "transcription_model", None),
                     "transcription_policy": transcription_prompt(record.options.source_language, 0),
-                    "translation": getattr(self.provider, "translation_model", None),
+                    "translation": getattr(self.provider, "translation_identity", getattr(self.provider, "translation_model", None)),
                     "filter_model": getattr(self.provider, "audio_filter_model", None),
                     "filter_enabled": os.getenv("VOCALIZATION_FILTER_ENABLED", "false")},
                     lambda size: assert_capacity(repo.storage_root,
@@ -372,7 +375,7 @@ class Worker:
                     if failure:
                         failure["stage"] = current.status.value
                     repo.update_status(job_id, JobStatus.CANCELLED if cancelled else JobStatus.FAILED,
-                        error=None if cancelled else "Gemini 콘텐츠 정책에 의해 차단되었습니다. 자동 재시도를 중단했습니다." if failure else str(exc),
+                        error=None if cancelled else f"{failure['provider']} 콘텐츠 정책에 의해 차단되었습니다. 자동 재시도를 중단했습니다." if failure else str(exc),
                         metadata={"stage_progress": None, "failure": failure,
                             "interrupted": isinstance(exc, WorkerStopping),
                             "failed_stage": current.status.value,

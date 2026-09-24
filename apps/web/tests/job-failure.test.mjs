@@ -31,6 +31,18 @@ test('ordinary failures retain their error message', () => {
   assert.equal(failureMessage(job), 'Network error');
 });
 
+test('external provider blocks are not mislabeled Gemini', () => {
+  const job = {
+    status: 'AWAITING_REVIEW',
+    error: null,
+    metadata: {
+      translation_blocks: { ko: [{ segment: 2, reason: 'REFUSAL', provider: 'anthropic' }] },
+    },
+  };
+  assert.match(failureMessage(job), /anthropic 콘텐츠 차단/);
+  assert.doesNotMatch(failureMessage(job), /Gemini/);
+});
+
 test('placeholder review explains that encoding was not run', () => {
   const job = {
     status: 'AWAITING_REVIEW',

@@ -130,7 +130,7 @@ class SubtitleReviewTests(unittest.TestCase):
 
     def test_prepare_waits_and_approved_resume_does_not_repeat_ai(self):
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        provider = Mock(transcription_model="test-stt", translation_model="test-translation", audio_filter_model="test-filter")
+        provider = Mock(transcription_model="test-stt", translation_model="test-translation", translation_identity="test-translation", audio_filter_model="test-filter")
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Original")]
         provider.translate.return_value = [TranscriptSegment(0, 1, "Translated")]
         worker = Worker(self.repo, provider)

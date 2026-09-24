@@ -110,3 +110,39 @@ class LLMSettingsTests(unittest.TestCase):
             error = client.get('/api/settings/llm/models')
             self.assertEqual(error.status_code, 502)
             self.assertNotIn(self.key, error.text)
+
+    def test_external_models_use_only_selected_key_and_allowlisted_endpoint(self):
+        from video_service.llm_providers import PROVIDERS, provider_headers
+        keys = {p: 'test-' + p + '-secret-not-real-12345' for p in PROVIDERS}
+        self.store.update(None, {**self.payload, 'credential_updates': {p: {'api_key': key} for p, key in keys.items()}})
+        app = create_app()
+        app.state.auth = AuthConfig(None)
+        client = TestClient(app)
+        upstream = AsyncMock()
+        upstream.__aenter__.return_value = upstream
+        with patch.object(settings_routes, 'settings', type('Config', (), {'storage_root': self.root})()), \
+                patch.object(settings_routes.httpx, 'AsyncClient', return_value=upstream):
+            for provider in ('openai', 'xai', 'anthropic', 'openrouter'):
+                name = 'vendor/model:free' if provider == 'openrouter' else 'test-model'
+                item = {'id': name, 'supported_parameters': ['structured_outputs'], 'architecture': {'output_modalities': ['text']}}
+                upstream.get.return_value = httpx.Response(200, json={'data': [item]}, request=httpx.Request('GET', PROVIDERS[provider]['models_url']))
+                result = client.get('/api/settings/llm/models', params={'provider': provider})
+                self.assertEqual(result.json(), {'models': [name]})
+                call = upstream.get.call_args
+                self.assertEqual(call.args[0], PROVIDERS[provider]['models_url'])
+                self.assertEqual(call.kwargs['headers'], provider_headers(provider, keys[provider]))
+                for key in keys.values():
+                    self.assertNotIn(key, result.text)
+            upstream.get.reset_mock()
+            self.assertEqual(client.get('/api/settings/llm/models?provider=https://evil.example').status_code, 422)
+            upstream.get.assert_not_called()
+
+    def test_legacy_encrypted_gemini_key_migrates_without_loss(self):
+        self.store.update(None, {**self.payload, 'api_key': self.key})
+        saved = json.loads(self.store.path(None).read_text())
+        saved['credential'] = saved.pop('credentials')['gemini']
+        self.store._write(self.store.path(None), json.dumps(saved).encode())
+        self.assertEqual(self.store.resolve()['api_key'], self.key)
+        self.store.update(None, {**self.payload, 'revision': 1, 'credential_updates': {'xai': {'api_key': 'test-xai-secret-not-real-12345'}}})
+        self.assertEqual(self.store.resolve()['api_key'], self.key)
+        self.assertNotIn('credential', json.loads(self.store.path(None).read_text()))

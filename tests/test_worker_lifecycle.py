@@ -98,7 +98,7 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.record.options.additional_languages = ["ja", "es"]
         self.repo.save(self.record)
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        provider = Mock(transcription_model="test-stt", translation_model="test-translation", audio_filter_model="test-filter")
+        provider = Mock(transcription_model="test-stt", translation_model="test-translation", translation_identity="test-translation", audio_filter_model="test-filter")
         provider.detect_vocalizations.return_value = {"removals": [{"start": 2.3, "end": 2.7, "kind": "breath"}],
             "protected": [{"start": 12, "end": 13}]}
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Original speech.")]
@@ -172,7 +172,7 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.record.options.additional_languages = ["ja"]
         self.repo.save(self.record)
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        provider = Mock(transcription_model="test-stt", translation_model="test-translation", audio_filter_model="test-filter")
+        provider = Mock(transcription_model="test-stt", translation_model="test-translation", translation_identity="test-translation", audio_filter_model="test-filter")
         provider.transcribe.return_value = [TranscriptSegment(0, 1, "Speech")]
         provider.translate.side_effect = [[TranscriptSegment(0, 1, "Primary")], RuntimeError("additional translation failed")]
         audio = self.repo.job_dir(self.job) / "work/audio.wav"
@@ -198,7 +198,7 @@ class WorkerLifecycleTests(unittest.TestCase):
     def test_partial_transcription_is_preserved_without_translation_or_encoding(self):
         (self.root / ".preserve-artifacts").touch()
         self.repo.update_status(self.job, JobStatus.QUEUED)
-        provider = Mock(transcription_model="test-stt", translation_model="test-translation", audio_filter_model="test-filter")
+        provider = Mock(transcription_model="test-stt", translation_model="test-translation", translation_identity="test-translation", audio_filter_model="test-filter")
         error = PartialTranscriptionError({}, [1])
         error.segments = [TranscriptSegment(0, 1, "First."), TranscriptSegment(3, 4, "Later.")]
         error.prefix = error.segments[:1]

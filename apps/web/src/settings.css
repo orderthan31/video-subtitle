@@ -1,6 +1,6 @@
-.settings-page {
+.video-workspace .video-main.settings-page {
   max-width: 880px;
-  width: 100%;
+  width: auto;
   box-sizing: border-box;
 }
 .settings-heading {
@@ -34,8 +34,10 @@
   gap: 9px;
   font-size: 14px;
   min-width: 0;
+  margin-bottom: 0;
 }
-.settings-page input:not([type='checkbox']) {
+.settings-page input:not([type='checkbox']),
+.settings-page select {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -62,6 +64,7 @@
 }
 .settings-page .settings-toggle {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 10px;
   margin: 15px 0;
@@ -74,6 +77,16 @@
 .settings-actions {
   display: flex;
   justify-content: flex-end;
+}
+.settings-actions .primary {
+  width: auto;
+  min-width: 140px;
+}
+.settings-model-refresh {
+  margin-top: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .settings-page .key-status {
   color: #4e5968;

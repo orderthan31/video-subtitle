@@ -38,7 +38,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.client = TestClient(app)
         self.asset = self.client.post('/api/jobs/' + job.job_id + '/register-source').json()
         self.base = '/api/videos/' + self.asset['asset_id']
-        self.provider = Mock(transcription_model='fake-stt', translation_model='fake-translation', audio_filter_model='fake-filter')
+        self.provider = Mock(transcription_model='fake-stt', translation_model='fake-translation', translation_identity='fake-translation', audio_filter_model='fake-filter')
         self.provider.transcribe.return_value = [TranscriptSegment(0, 1, 'Source speech.')]
         self.provider.translate.side_effect = lambda segments, *a, **k: [s.with_text('Translated speech.') for s in segments]
         self.media = {'duration': 5, 'streams': [

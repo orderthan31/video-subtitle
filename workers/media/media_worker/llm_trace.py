@@ -48,7 +48,7 @@ def save_trace(path, data, secret):
         int(os.getenv("MIN_FREE_SPACE_BYTES", str(50 * 1024**3))), additional=size))
 
 
-def begin_call(model, attempt, payload, secret):
+def begin_call(model, attempt, payload, secret, *, provider='gemini'):
     destination = _destination.get()
     if destination is None:
         return None
@@ -56,7 +56,7 @@ def begin_call(model, attempt, payload, secret):
     folder = directory / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ-") + uuid4().hex)
     folder.mkdir(parents=True)
     context = attempt_context.get()
-    save_trace(folder / "request.json", {"model": model, "attempt": attempt,
+    save_trace(folder / "request.json", {"provider": provider, "model": model, "attempt": attempt,
         "diagnostic_context": context["identity"] if context is not None else None,
         "window": _window.get(), "payload": payload}, secret)
     return folder

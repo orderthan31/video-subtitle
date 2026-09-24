@@ -144,7 +144,7 @@ async def run_segment_queue(count, operation, check, progress, *, path=None, bef
                     results[index] = validate(index, result)
                     record(index, "success", retryable=False)
                 except ContentBlockedError as exc:
-                    content_blocks.append({"segment": index + 1, "reason": exc.reason})
+                    content_blocks.append({"segment": index + 1, "reason": exc.reason, "provider": exc.provider})
                     record(index, type(exc).__name__, retryable=False, retry_scheduled=False,
                         category="remote_content_blocked", block_reason=exc.reason, failure_phase="operation")
                     if blocked_result is None:

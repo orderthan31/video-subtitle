@@ -104,7 +104,7 @@ class TranscriptionQueueTests(unittest.IsolatedAsyncioTestCase):
                     path=path, failure_type=failure_type)
             self.assertEqual(calls, [(0, 1), (1, 1), (2, 1)])
             self.assertEqual(sorted(error.exception.results), [1, 2])
-            self.assertEqual(error.exception.content_blocks, [{"segment": 1, "reason": "PROHIBITED_CONTENT"}])
+            self.assertEqual(error.exception.content_blocks, [{"segment": 1, "reason": "PROHIBITED_CONTENT", "provider": "Gemini"}])
             saved = read_json(path)
             self.assertEqual(saved['content_blocks'], error.exception.content_blocks)
             blocked = saved['history'][0]['diagnostics']['events'][-1]
@@ -124,7 +124,7 @@ class TranscriptionQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 6)
         self.assertEqual(result[0], ['blocked'])
         self.assertEqual(len(calls), 6)
-        self.assertEqual(snapshots[-1]['content_blocks'], [{'segment': 1, 'reason': 'PROHIBITED_CONTENT'}])
+        self.assertEqual(snapshots[-1]['content_blocks'], [{'segment': 1, 'reason': 'PROHIBITED_CONTENT', 'provider': 'Gemini'}])
         self.assertEqual(snapshots[-1]['failed'], 0)
         calls.clear()
         await run_transcription_queue(6, operation, lambda: None, snapshots.append,

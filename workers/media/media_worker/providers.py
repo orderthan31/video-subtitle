@@ -27,13 +27,11 @@ from .translation_inputs import translation_groups
 from .translation_requests import requests as translation_requests, align_result, SCHEMA as TRANSLATION_SCHEMA
 from .llm_diagnostics import emit, exception_details, attempt_context, new_context
 from .content_block import check_content_block, BLOCKED_TEXT, ContentBlockedError
+from video_service.llm_providers import PROVIDERS, valid_model
+from .translation_transport import ModelRequestError, request_translation
 
 
 REQUEST_DEADLINE_SECONDS = 125
-
-
-class ModelRequestError(RuntimeError):
-    pass
 
 
 class GeminiProvider:
@@ -47,14 +45,36 @@ class GeminiProvider:
         self.key = preferences.get('api_key', self.key)
         self.transcription_model = preferences.get('transcription_model', self.transcription_model)
         self.translation_model = preferences.get('translation_model', self.translation_model)
+        self.translation_provider = preferences.get('translation_provider', 'gemini')
         self.preferences = preferences
-        if not self.key or not all(re.fullmatch(r"[a-zA-Z0-9_.-]+", model) for model in (self.transcription_model, self.translation_model, self.audio_filter_model)):
-            raise ValueError("Set GEMINI_API_KEY and valid transcription/translation model names")
+        if (self.translation_provider not in PROVIDERS or not valid_model(self.translation_provider, self.translation_model)
+                or not all(valid_model('gemini', model) for model in (self.transcription_model, self.audio_filter_model))):
+            raise ValueError("Set valid transcription/translation model names")
+
+    @property
+    def translation_identity(self):
+        # Keep legacy Gemini checkpoint identities byte-for-byte compatible.
+        return self.translation_model if self.translation_provider == 'gemini' else f'{self.translation_provider}:{self.translation_model}'
+
+    def validate_for_stages(self, stages):
+        required = set()
+        if 'transcribe' in stages or ('extract_audio' in stages and os.getenv('VOCALIZATION_FILTER_ENABLED', 'false').lower() == 'true'):
+            required.add('gemini')
+        if 'translate' in stages:
+            required.add(self.translation_provider)
+            if self.preferences.get('translation_fallback_model') and any(self.preferences.get(flag) for flag in ('fallback_on_error', 'fallback_on_block')):
+                required.add(self.preferences.get('translation_fallback_provider', 'gemini'))
+        for provider in required:
+            key = self.key if provider == 'gemini' else self.preferences.get('api_keys', {}).get(provider)
+            if not key:
+                raise RuntimeError(f'{provider} API key is not configured')
 
     @asynccontextmanager
     async def _client(self, response_hook):
         if os.getenv('PAID_LLM_ENABLED', 'false').lower() != 'true':
             raise RuntimeError('Paid LLM calls are disabled (PAID_LLM_ENABLED=false)')
+        if not self.key:
+            raise RuntimeError('Gemini API key is not configured')
         async with httpx.AsyncClient(timeout=120, event_hooks={"response": [response_hook]}) as transport:
             sdk = genai.Client(api_key=self.key, vertexai=False, http_options=types.HttpOptions(
                 api_version="v1beta", timeout=120000, httpx_async_client=transport,
@@ -70,22 +90,31 @@ class GeminiProvider:
         preferences = getattr(self, 'preferences', {})
         context = attempt_context.get()
         stage = context['identity'].get('stage') if context else None
+        provider = preferences.get('translation_provider', 'gemini') if stage == 'translation' else 'gemini'
+        fallback_provider = preferences.get('translation_fallback_provider', 'gemini') if stage == 'translation' else 'gemini'
         fallback = preferences.get(f'{stage}_fallback_model') if stage in {'transcription', 'translation'} else None
         identity = context['identity'] if context else {}
         slot = (identity.get('job_id'), identity.get('queue_id'), stage, identity.get('segment'))
         if not hasattr(self, '_fallback_active'):
             self._fallback_active = set()
-        if fallback == model:
+        if fallback == model and fallback_provider == provider:
             fallback = None
+        async def invoke(selected_provider, selected_model, attempts):
+            emit('provider_selected', provider=selected_provider, model=selected_model)
+            if selected_provider == 'gemini':
+                return await self._request_once(parts, schema, check, selected_model, transcription_config,
+                    max_attempts=attempts, trace_attempt=trace_attempt)
+            key = preferences.get('api_keys', {}).get(selected_provider, '')
+            return await request_translation(selected_provider, key, selected_model, parts, schema,
+                check, trace_attempt, retry_delay)
         # The segment queue owns the retry budget. Once it retries a failed
         # primary, keep subsequent attempts on the fallback, not both models.
         if fallback and (slot in self._fallback_active or (preferences.get('fallback_on_error') and (trace_attempt or 1) > 1)):
-            emit('fallback_selected', primary_model=model, fallback_model=fallback, reason='retry')
-            return await self._request_once(parts, schema, check, fallback, transcription_config,
-                max_attempts=1, trace_attempt=trace_attempt)
+            emit('fallback_selected', primary_provider=provider, fallback_provider=fallback_provider,
+                 primary_model=model, fallback_model=fallback, reason='retry')
+            return await invoke(fallback_provider, fallback, 1)
         try:
-            return await self._request_once(parts, schema, check, model, transcription_config,
-                max_attempts=max_attempts, trace_attempt=trace_attempt)
+            return await invoke(provider, model, max_attempts)
         except (ContentBlockedError, RetryableTranscriptionError, ModelRequestError, TimeoutError, httpx.TransportError, ValueError) as error:
             policy = 'fallback_on_block' if isinstance(error, ContentBlockedError) else 'fallback_on_error'
             if not fallback or not preferences.get(policy):
@@ -93,9 +122,9 @@ class GeminiProvider:
             self._fallback_active.add(slot)
             check()
             emit('fallback_selected', primary_model=model, fallback_model=fallback,
+                primary_provider=provider, fallback_provider=fallback_provider,
                 reason='content_blocked' if isinstance(error, ContentBlockedError) else 'request_error')
-            return await self._request_once(parts, schema, check, fallback, transcription_config,
-                max_attempts=1, trace_attempt=trace_attempt)
+            return await invoke(fallback_provider, fallback, 1)
 
     async def _request_once(self, parts, schema, check, model, transcription_config=None, *, max_attempts=3, trace_attempt=None):
         token = None
@@ -171,7 +200,7 @@ class GeminiProvider:
                         else {"responseMimeType": "application/json", "responseSchema": schema})}
                 trace = await disk_call(begin_call, model, trace_attempt or attempt + 1, payload, self.key)
                 started = time.monotonic()
-                emit("request_started", model=model, request_attempt=trace_attempt or attempt + 1,
+                emit("request_started", provider='gemini', model=model, request_attempt=trace_attempt or attempt + 1,
                     trace_id=trace.name if trace is not None else None, http_timeout_seconds=120)
                 task = asyncio.create_task(client.models.generate_content(model=model,
                     contents=[types.Content(role="user", parts=sdk_parts)], config=config))
@@ -235,6 +264,13 @@ class GeminiProvider:
                     emit("response_validation_failed", category="remote_output_invalid_json", status=response.status_code)
                     raise
                 check_content_block(data)
+                usage = data.get('usageMetadata') or {}
+                if not isinstance(usage, dict):
+                    usage = {}
+                emit('token_usage', provider='gemini', model=model,
+                     **{target: usage.get(source) if type(usage.get(source)) is int else None for target, source in (
+                         ('input_tokens', 'promptTokenCount'), ('output_tokens', 'candidatesTokenCount'),
+                         ('reasoning_tokens', 'thoughtsTokenCount'), ('cached_tokens', 'cachedContentTokenCount'))})
                 candidates = data.get("candidates", [])
                 if not candidates or candidates[0].get("finishReason") != "STOP":
                     emit("response_validation_failed", category="remote_output_incomplete_or_blocked", status=response.status_code)
@@ -403,7 +439,8 @@ class GeminiProvider:
                 + context + json.dumps([group[0].text for group in batch], ensure_ascii=False)) for batch in batches]
 
         def cache_path(prompts, policy):
-            key = hashlib.sha256(json.dumps([policy, self.translation_model, prompts],
+            identity = getattr(self, 'translation_identity', self.translation_model)
+            key = hashlib.sha256(json.dumps([policy, identity, prompts],
                 sort_keys=True).encode()).hexdigest()
             return work / 'translation' / f'{key}.json' if work is not None else None
 
